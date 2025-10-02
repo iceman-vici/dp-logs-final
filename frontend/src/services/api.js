@@ -4,7 +4,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 30000,
+  timeout: 300000, // Increased to 5 minutes for large sync operations
   headers: {
     'Content-Type': 'application/json',
   },
@@ -60,8 +60,19 @@ export const callsApi = {
   },
 
   downloadCalls: async (from, to, limit = 50) => {
+    // Use longer timeout for download operations
     const response = await api.get('/sync/download', {
-      params: { from, to, limit }
+      params: { from, to, limit },
+      timeout: 300000 // 5 minutes timeout for sync
+    });
+    return response.data;
+  },
+
+  // New method for quick sync (single page)
+  downloadCallsQuick: async (from, to) => {
+    const response = await api.get('/sync/download-quick', {
+      params: { from, to },
+      timeout: 60000 // 1 minute timeout for quick sync
     });
     return response.data;
   },
