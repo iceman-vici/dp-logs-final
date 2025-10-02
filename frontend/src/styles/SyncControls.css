@@ -74,6 +74,38 @@
   border-color: var(--primary-color);
 }
 
+.sync-mode-selector {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--hover-bg);
+  border-radius: 8px;
+}
+
+.radio-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.radio-label input[type="radio"] {
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+}
+
+.radio-label span {
+  user-select: none;
+}
+
+.radio-label:hover {
+  color: var(--primary-color);
+}
+
 .action-controls {
   display: flex;
   gap: 1rem;
@@ -168,6 +200,11 @@
   .quick-select {
     margin-left: 0;
     justify-content: space-between;
+  }
+  
+  .sync-mode-selector {
+    flex-direction: column;
+    gap: 1rem;
   }
   
   .action-controls {

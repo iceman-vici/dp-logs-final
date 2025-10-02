@@ -56,10 +56,17 @@ function App() {
     }
   };
 
-  const handleSync = async (fromDate, toDate) => {
+  const handleSync = async (fromDate, toDate, syncMode = 'quick') => {
     try {
       setLoading(true);
-      const result = await callsApi.downloadCalls(fromDate, toDate);
+      
+      // Use different endpoints based on sync mode
+      let result;
+      if (syncMode === 'quick') {
+        result = await callsApi.downloadCallsQuick(fromDate, toDate);
+      } else {
+        result = await callsApi.downloadCalls(fromDate, toDate);
+      }
       
       toast.success(result.message || 'Sync completed successfully');
       setLastSync(new Date());

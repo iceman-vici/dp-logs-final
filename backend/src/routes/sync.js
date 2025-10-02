@@ -95,11 +95,10 @@ async function insertRecording(call_id, details) {
 }
 
 // Helper: Fetch calls from Dialpad with pagination
-async function fetchCallsFromDialpad(startedAfter, startedBefore, limit = 50) {
+async function fetchCallsFromDialpad(startedAfter, startedBefore, limit = 50, maxPages = 100) {
   const allCalls = [];
   let cursor = null;
   let pageCount = 0;
-  const maxPages = 100; // Safety limit to prevent infinite loops
   
   console.log(`Starting to fetch calls from Dialpad...`);
   
@@ -234,6 +233,64 @@ router.get('/download', async (req, res) => {
     res.json(response);
   } catch (err) {
     console.error('Download error:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: 'Failed to download calls', 
+      details: err.response?.data || err.message 
+    });
+  }
+});
+
+// GET /api/sync/download-quick - Quick download (first 50 calls only)
+router.get('/download-quick', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
+  }
+
+  const startedAfter = nyToUtcEpoch(from);
+  const startedBefore = nyToUtcEpoch(to);
+  console.log(`Quick download params: started_after=${startedAfter}, started_before=${startedBefore}`);
+
+  let totalInserted = 0;
+
+  try {
+    // Fetch only first page (50 calls max)
+    const allCalls = await fetchCallsFromDialpad(startedAfter, startedBefore, 50, 1);
+    
+    if (allCalls.length === 0) {
+      return res.json({ 
+        success: true, 
+        inserted: 0, 
+        message: 'No calls found in the specified date range',
+        isQuickSync: true
+      });
+    }
+
+    console.log(`Quick sync: Inserting ${allCalls.length} calls...`);
+
+    // Process calls
+    for (const call of allCalls) {
+      try {
+        await insertCall(call);
+        if (call.recording_details) {
+          await insertRecording(call.call_id, call.recording_details);
+        }
+        totalInserted++;
+      } catch (error) {
+        console.error(`Failed to insert call ${call.call_id}:`, error.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      totalCalls: allCalls.length,
+      inserted: totalInserted,
+      message: `Quick sync completed: ${totalInserted} calls inserted (first 50 only)`,
+      isQuickSync: true,
+      hasMore: allCalls.length === 50 // Indicates there might be more calls
+    });
+  } catch (err) {
+    console.error('Quick download error:', err.response?.data || err.message);
     res.status(500).json({ 
       error: 'Failed to download calls', 
       details: err.response?.data || err.message 

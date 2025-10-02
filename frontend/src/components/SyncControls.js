@@ -23,17 +23,11 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const [toDate, setToDate] = useState(() => getNYTime());
   const [syncStatus, setSyncStatus] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
-
-  // Display dates in NY timezone format
-  const formatNYDate = (date) => {
-    if (!date) return '';
-    const nyDate = utcToZonedTime(date, nyTz);
-    return format(nyDate, "MM/dd/yyyy, h:mm aa") + ' (NY)';
-  };
+  const [syncMode, setSyncMode] = useState('quick'); // 'quick' or 'full'
 
   const handleSync = async () => {
     setIsSyncing(true);
-    setSyncStatus('Downloading calls...');
+    setSyncStatus(syncMode === 'quick' ? 'Quick sync (first 50 calls)...' : 'Downloading all calls (may take a few minutes)...');
     
     try {
       // Format dates as NY timezone ISO strings
@@ -41,9 +35,15 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       const toIso = format(toDate, "yyyy-MM-dd'T'HH:mm:ss");
       
       console.log('Syncing from:', fromIso, 'to:', toIso, '(NY Time)');
+      console.log('Sync mode:', syncMode);
       
-      const result = await onSync(fromIso, toIso);
-      setSyncStatus(result.message || 'Sync completed');
+      const result = await onSync(fromIso, toIso, syncMode);
+      
+      if (result.hasMore && syncMode === 'quick') {
+        setSyncStatus(result.message + ' - More calls available. Use "Full Sync" to get all.');
+      } else {
+        setSyncStatus(result.message || 'Sync completed');
+      }
     } catch (err) {
       setSyncStatus(`Sync failed: ${err.message}`);
     } finally {
@@ -100,13 +100,36 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
         </div>
       </div>
 
+      <div className="sync-mode-selector">
+        <label className="radio-label">
+          <input
+            type="radio"
+            value="quick"
+            checked={syncMode === 'quick'}
+            onChange={(e) => setSyncMode(e.target.value)}
+            disabled={isSyncing}
+          />
+          <span>Quick Sync (First 50 calls - Fast)</span>
+        </label>
+        <label className="radio-label">
+          <input
+            type="radio"
+            value="full"
+            checked={syncMode === 'full'}
+            onChange={(e) => setSyncMode(e.target.value)}
+            disabled={isSyncing}
+          />
+          <span>Full Sync (All calls - May take time)</span>
+        </label>
+      </div>
+
       <div className="action-controls">
         <button 
           onClick={handleSync} 
           disabled={loading || isSyncing}
           className="btn-primary"
         >
-          {isSyncing ? 'Syncing...' : 'Download & Insert Calls'}
+          {isSyncing ? 'Syncing...' : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync')}
         </button>
         
         <button 
