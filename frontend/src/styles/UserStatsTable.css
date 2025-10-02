@@ -71,15 +71,3 @@
   color: var(--text-secondary);
   font-size: 0.9rem;
 }
-
-/* Responsive */
-@media (max-width: 768px) {
-  .user-stats-table {
-    font-size: 0.8rem;
-  }
-  
-  .user-stats-table th,
-  .user-stats-table td {
-    padding: 0.5rem 0.25rem;
-  }
-}

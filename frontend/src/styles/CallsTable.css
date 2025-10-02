@@ -56,26 +56,6 @@
   background: var(--hover-bg);
 }
 
-/* Cell-specific styles */
-.cell-call_id {
-  font-family: monospace;
-  font-size: 0.85rem;
-}
-
-.cell-state {
-  font-weight: 500;
-}
-
-.cell-duration,
-.cell-total_duration {
-  font-weight: 500;
-  color: var(--primary-color);
-}
-
-.cell-direction {
-  text-transform: capitalize;
-}
-
 /* Pagination */
 .pagination {
   display: flex;
@@ -110,21 +90,4 @@
 .pagination span {
   font-size: 0.95rem;
   color: var(--text-secondary);
-}
-
-/* Responsive table */
-@media (max-width: 768px) {
-  .calls-table {
-    font-size: 0.8rem;
-  }
-  
-  .calls-table th,
-  .calls-table td {
-    padding: 0.5rem;
-  }
-  
-  .pagination {
-    flex-direction: column;
-    gap: 0.5rem;
-  }
 }
