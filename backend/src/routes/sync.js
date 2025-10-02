@@ -2,14 +2,14 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const { pool } = require('../config/database');
-const { fromZonedTime } = require('date-fns-tz');
+const { zonedTimeToUtc } = require('date-fns-tz');
 const { formatDurationMs } = require('../utils/formatters');
 
 // Helper: NY ISO to UTC ms epoch
 function nyToUtcEpoch(nyIsoString) {
   const nyTz = 'America/New_York';
   const nyDate = new Date(nyIsoString);
-  const utcDate = fromZonedTime(nyDate, nyTz);
+  const utcDate = zonedTimeToUtc(nyDate, nyTz);
   return utcDate.getTime();
 }
 
