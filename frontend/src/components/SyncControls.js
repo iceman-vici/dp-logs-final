@@ -1,26 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DatePicker from 'react-datepicker';
 import { format } from 'date-fns';
-import { utcToZonedTime } from 'date-fns-tz';
+import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 import 'react-datepicker/dist/react-datepicker.css';
 import '../styles/SyncControls.css';
 
 const SyncControls = ({ onSync, onRefresh, loading }) => {
-  const [fromDate, setFromDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
-  const [toDate, setToDate] = useState(new Date());
+  const nyTz = 'America/New_York';
+  
+  // Initialize dates in NY timezone
+  const getNYTime = (date = new Date()) => {
+    return utcToZonedTime(date, nyTz);
+  };
+  
+  // Initialize with NY timezone dates
+  const [fromDate, setFromDate] = useState(() => {
+    const nyNow = getNYTime();
+    nyNow.setDate(nyNow.getDate() - 7); // 7 days ago in NY time
+    return nyNow;
+  });
+  
+  const [toDate, setToDate] = useState(() => getNYTime());
   const [syncStatus, setSyncStatus] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Display dates in NY timezone format
+  const formatNYDate = (date) => {
+    if (!date) return '';
+    const nyDate = utcToZonedTime(date, nyTz);
+    return format(nyDate, "MM/dd/yyyy, h:mm aa") + ' (NY)';
+  };
 
   const handleSync = async () => {
     setIsSyncing(true);
     setSyncStatus('Downloading calls...');
     
     try {
-      const nyTz = 'America/New_York';
-      const zonedFrom = utcToZonedTime(fromDate, nyTz);
-      const zonedTo = utcToZonedTime(toDate, nyTz);
-      const fromIso = format(zonedFrom, "yyyy-MM-dd'T'HH:mm:ss");
-      const toIso = format(zonedTo, "yyyy-MM-dd'T'HH:mm:ss");
+      // Format dates as NY timezone ISO strings
+      const fromIso = format(fromDate, "yyyy-MM-dd'T'HH:mm:ss");
+      const toIso = format(toDate, "yyyy-MM-dd'T'HH:mm:ss");
+      
+      console.log('Syncing from:', fromIso, 'to:', toIso, '(NY Time)');
       
       const result = await onSync(fromIso, toIso);
       setSyncStatus(result.message || 'Sync completed');
@@ -32,10 +52,12 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   };
 
   const handleQuickDateRange = (days) => {
-    const now = new Date();
-    const from = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    setFromDate(from);
-    setToDate(now);
+    const nyNow = getNYTime();
+    const nyFrom = getNYTime();
+    nyFrom.setDate(nyFrom.getDate() - days);
+    
+    setFromDate(nyFrom);
+    setToDate(nyNow);
   };
 
   return (
@@ -47,10 +69,13 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             selected={fromDate}
             onChange={setFromDate}
             showTimeSelect
-            dateFormat="Pp"
+            dateFormat="MM/dd/yyyy, h:mm aa"
             placeholderText="Select start date (NY)"
             className="date-input"
+            timeIntervals={15}
+            popperPlacement="bottom-start"
           />
+          <span className="timezone-label">NY Time</span>
         </div>
         
         <div className="date-picker-group">
@@ -59,10 +84,13 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             selected={toDate}
             onChange={setToDate}
             showTimeSelect
-            dateFormat="Pp"
+            dateFormat="MM/dd/yyyy, h:mm aa"
             placeholderText="Select end date (NY)"
             className="date-input"
+            timeIntervals={15}
+            popperPlacement="bottom-start"
           />
+          <span className="timezone-label">NY Time</span>
         </div>
         
         <div className="quick-select">
@@ -95,6 +123,10 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
           {syncStatus}
         </div>
       )}
+      
+      <div className="timezone-info">
+        <small>All times are in New York timezone (America/New_York)</small>
+      </div>
     </div>
   );
 };
