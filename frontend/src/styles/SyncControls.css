@@ -44,6 +44,11 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
 }
 
+.date-input:disabled {
+  background: var(--hover-bg);
+  cursor: not-allowed;
+}
+
 .timezone-label {
   font-size: 0.75rem;
   color: var(--primary-color);
@@ -69,9 +74,14 @@
   transition: all 0.2s;
 }
 
-.quick-select button:hover {
+.quick-select button:hover:not(:disabled) {
   background: var(--hover-bg);
   border-color: var(--primary-color);
+}
+
+.quick-select button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .sync-mode-selector {
@@ -98,6 +108,10 @@
   height: 18px;
 }
 
+.radio-label input[type="radio"]:disabled {
+  cursor: not-allowed;
+}
+
 .radio-label span {
   user-select: none;
 }
@@ -110,6 +124,7 @@
   display: flex;
   gap: 1rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .sync-status {
@@ -130,6 +145,117 @@
   background: #fef2f2;
   color: var(--error-color);
   border: 1px solid #fca5a5;
+}
+
+/* Sync Logs Container */
+.sync-logs-container {
+  margin-top: 1.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.sync-logs-header {
+  background: var(--primary-color);
+  color: white;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sync-logs {
+  height: 200px;
+  overflow-y: auto;
+  padding: 0.5rem;
+  background: white;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.log-entry {
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.25rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  animation: fadeIn 0.3s ease;
+}
+
+.log-timestamp {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.log-message {
+  flex: 1;
+  word-wrap: break-word;
+}
+
+/* Log entry types */
+.log-info {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.log-progress {
+  background: #dbeafe;
+  color: #1e40af;
+  border-left: 3px solid #3b82f6;
+}
+
+.log-success {
+  background: #dcfce7;
+  color: #166534;
+  border-left: 3px solid #22c55e;
+}
+
+.log-warning {
+  background: #fef3c7;
+  color: #92400e;
+  border-left: 3px solid #f59e0b;
+}
+
+.log-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border-left: 3px solid #ef4444;
+}
+
+/* Small spinner for logs header */
+.spinner-small {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+
+/* Scrollbar styling */
+.sync-logs::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sync-logs::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+.sync-logs::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.sync-logs::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }
 
 .timezone-info {
@@ -156,6 +282,26 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
   }
 }
 
@@ -213,5 +359,9 @@
   
   .action-controls button {
     width: 100%;
+  }
+  
+  .sync-logs {
+    height: 150px;
   }
 }

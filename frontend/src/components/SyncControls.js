@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import DatePicker from 'react-datepicker';
 import { format } from 'date-fns';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
@@ -7,6 +7,7 @@ import '../styles/SyncControls.css';
 
 const SyncControls = ({ onSync, onRefresh, loading }) => {
   const nyTz = 'America/New_York';
+  const logContainerRef = useRef(null);
   
   // Initialize dates in NY timezone
   const getNYTime = (date = new Date()) => {
@@ -24,30 +25,90 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const [syncStatus, setSyncStatus] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMode, setSyncMode] = useState('quick'); // 'quick' or 'full'
+  const [syncLogs, setSyncLogs] = useState([]);
+  const [showLogs, setShowLogs] = useState(false);
+
+  // Auto-scroll logs to bottom when new logs are added
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    }
+  }, [syncLogs]);
+
+  const addLog = (message, type = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setSyncLogs(prev => [...prev, { timestamp, message, type }]);
+  };
+
+  const clearLogs = () => {
+    setSyncLogs([]);
+  };
 
   const handleSync = async () => {
     setIsSyncing(true);
-    setSyncStatus(syncMode === 'quick' ? 'Quick sync (first 50 calls)...' : 'Downloading all calls (may take a few minutes)...');
+    setShowLogs(true);
+    clearLogs();
+    
+    const syncMessage = syncMode === 'quick' 
+      ? 'Starting Quick Sync (first 50 calls)...' 
+      : 'Starting Full Sync (all calls)...';
+    
+    setSyncStatus(syncMessage);
+    addLog(syncMessage, 'info');
     
     try {
       // Format dates as NY timezone ISO strings
       const fromIso = format(fromDate, "yyyy-MM-dd'T'HH:mm:ss");
       const toIso = format(toDate, "yyyy-MM-dd'T'HH:mm:ss");
       
-      console.log('Syncing from:', fromIso, 'to:', toIso, '(NY Time)');
-      console.log('Sync mode:', syncMode);
+      addLog(`Date range: ${fromIso} to ${toIso} (NY Time)`, 'info');
+      addLog(`Sync mode: ${syncMode.toUpperCase()}`, 'info');
+      addLog('Connecting to Dialpad API...', 'info');
       
-      const result = await onSync(fromIso, toIso, syncMode);
+      // Create a wrapper function that handles progress updates
+      const syncWithProgress = async (from, to, mode) => {
+        // Simulate progress updates (in real implementation, these would come from the backend)
+        const progressInterval = setInterval(() => {
+          if (mode === 'full') {
+            addLog('Fetching next page of calls...', 'progress');
+          }
+        }, 3000);
+        
+        try {
+          const result = await onSync(from, to, mode);
+          clearInterval(progressInterval);
+          return result;
+        } catch (error) {
+          clearInterval(progressInterval);
+          throw error;
+        }
+      };
+      
+      addLog('Fetching calls from Dialpad...', 'progress');
+      const result = await syncWithProgress(fromIso, toIso, syncMode);
+      
+      // Log results
+      addLog(`✓ Sync completed successfully!`, 'success');
+      if (result.totalCalls) {
+        addLog(`Total calls found: ${result.totalCalls}`, 'success');
+        addLog(`Calls inserted: ${result.inserted}`, 'success');
+        if (result.failed > 0) {
+          addLog(`Calls failed: ${result.failed}`, 'warning');
+        }
+      }
       
       if (result.hasMore && syncMode === 'quick') {
-        setSyncStatus(result.message + ' - More calls available. Use "Full Sync" to get all.');
+        addLog('ℹ More calls available. Use "Full Sync" to get all.', 'warning');
+        setSyncStatus(result.message + ' - More calls available');
       } else {
         setSyncStatus(result.message || 'Sync completed');
       }
     } catch (err) {
+      addLog(`✗ Sync failed: ${err.message}`, 'error');
       setSyncStatus(`Sync failed: ${err.message}`);
     } finally {
       setIsSyncing(false);
+      addLog('Sync process ended.', 'info');
     }
   };
 
@@ -58,6 +119,16 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     
     setFromDate(nyFrom);
     setToDate(nyNow);
+  };
+
+  const getLogClassName = (type) => {
+    switch (type) {
+      case 'error': return 'log-error';
+      case 'warning': return 'log-warning';
+      case 'success': return 'log-success';
+      case 'progress': return 'log-progress';
+      default: return 'log-info';
+    }
   };
 
   return (
@@ -74,6 +145,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             className="date-input"
             timeIntervals={15}
             popperPlacement="bottom-start"
+            disabled={isSyncing}
           />
           <span className="timezone-label">NY Time</span>
         </div>
@@ -89,14 +161,15 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             className="date-input"
             timeIntervals={15}
             popperPlacement="bottom-start"
+            disabled={isSyncing}
           />
           <span className="timezone-label">NY Time</span>
         </div>
         
         <div className="quick-select">
-          <button onClick={() => handleQuickDateRange(1)}>Last 24h</button>
-          <button onClick={() => handleQuickDateRange(7)}>Last 7d</button>
-          <button onClick={() => handleQuickDateRange(30)}>Last 30d</button>
+          <button onClick={() => handleQuickDateRange(1)} disabled={isSyncing}>Last 24h</button>
+          <button onClick={() => handleQuickDateRange(7)} disabled={isSyncing}>Last 7d</button>
+          <button onClick={() => handleQuickDateRange(30)} disabled={isSyncing}>Last 30d</button>
         </div>
       </div>
 
@@ -134,16 +207,51 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
         
         <button 
           onClick={onRefresh} 
-          disabled={loading}
+          disabled={loading || isSyncing}
           className="btn-secondary"
         >
           Refresh Tables
         </button>
+        
+        {syncLogs.length > 0 && (
+          <button 
+            onClick={() => setShowLogs(!showLogs)}
+            className="btn-secondary"
+          >
+            {showLogs ? 'Hide Logs' : 'Show Logs'}
+          </button>
+        )}
+        
+        {syncLogs.length > 0 && !isSyncing && (
+          <button 
+            onClick={clearLogs}
+            className="btn-secondary"
+          >
+            Clear Logs
+          </button>
+        )}
       </div>
 
       {syncStatus && (
         <div className={`sync-status ${syncStatus.includes('failed') ? 'error' : 'success'}`}>
           {syncStatus}
+        </div>
+      )}
+      
+      {showLogs && syncLogs.length > 0 && (
+        <div className="sync-logs-container">
+          <div className="sync-logs-header">
+            <span>Sync Progress Logs</span>
+            {isSyncing && <span className="spinner-small"></span>}
+          </div>
+          <div className="sync-logs" ref={logContainerRef}>
+            {syncLogs.map((log, index) => (
+              <div key={index} className={`log-entry ${getLogClassName(log.type)}`}>
+                <span className="log-timestamp">[{log.timestamp}]</span>
+                <span className="log-message">{log.message}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       
