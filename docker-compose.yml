@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: dialpad-logs-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-dialpad_logs}
+      POSTGRES_USER: ${DB_USER:-dialpad_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dialpad_password}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    networks:
+      - dialpad-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dialpad-logs-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-dialpad_user}
+      DB_PASSWORD: ${DB_PASSWORD:-dialpad_password}
+      DB_NAME: ${DB_NAME:-dialpad_logs}
+      DIALPAD_TOKEN: ${DIALPAD_TOKEN}
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+    networks:
+      - dialpad-network
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: dialpad-logs-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:3001/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - dialpad-network
+    restart: unless-stopped
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:
+
+networks:
+  dialpad-network:
+    driver: bridge

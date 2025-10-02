@@ -1,0 +1,138 @@
+.sync-controls {
+  background: var(--card-background);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 2rem;
+}
+
+.date-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.date-picker-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.date-picker-group label {
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 50px;
+}
+
+.date-input {
+  padding: 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.date-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.quick-select {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.quick-select button {
+  padding: 0.4rem 0.8rem;
+  background: white;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.quick-select button:hover {
+  background: var(--hover-bg);
+  border-color: var(--primary-color);
+}
+
+.action-controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.sync-status {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  animation: slideIn 0.3s ease;
+}
+
+.sync-status.success {
+  background: #ecfdf5;
+  color: var(--success-color);
+  border: 1px solid #86efac;
+}
+
+.sync-status.error {
+  background: #fef2f2;
+  color: var(--error-color);
+  border: 1px solid #fca5a5;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* React DatePicker custom styles */
+.react-datepicker-wrapper {
+  display: inline-block;
+}
+
+.react-datepicker__input-container input {
+  width: 100%;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .sync-controls {
+    padding: 1rem;
+  }
+  
+  .date-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .date-picker-group {
+    width: 100%;
+  }
+  
+  .quick-select {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+  
+  .action-controls {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .action-controls button {
+    width: 100%;
+  }
+}

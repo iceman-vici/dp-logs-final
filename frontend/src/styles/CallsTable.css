@@ -1,0 +1,130 @@
+.calls-table-container {
+  position: relative;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.calls-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.calls-table thead {
+  background: var(--hover-bg);
+}
+
+.calls-table th {
+  text-align: left;
+  padding: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.calls-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.calls-table th.sortable:hover {
+  background: #e2e8f0;
+}
+
+.sort-indicator {
+  font-size: 0.8rem;
+  margin-left: 0.25rem;
+  color: var(--primary-color);
+}
+
+.calls-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.calls-table tbody tr {
+  transition: background-color 0.2s;
+}
+
+.calls-table tbody tr:hover {
+  background: var(--hover-bg);
+}
+
+/* Cell-specific styles */
+.cell-call_id {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.cell-state {
+  font-weight: 500;
+}
+
+.cell-duration,
+.cell-total_duration {
+  font-weight: 500;
+  color: var(--primary-color);
+}
+
+.cell-direction {
+  text-transform: capitalize;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-color);
+}
+
+.pagination button {
+  padding: 0.5rem 1rem;
+  background: white;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+  background: var(--hover-bg);
+  border-color: var(--primary-color);
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pagination span {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+}
+
+/* Responsive table */
+@media (max-width: 768px) {
+  .calls-table {
+    font-size: 0.8rem;
+  }
+  
+  .calls-table th,
+  .calls-table td {
+    padding: 0.5rem;
+  }
+  
+  .pagination {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}

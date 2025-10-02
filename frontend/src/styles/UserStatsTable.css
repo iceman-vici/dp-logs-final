@@ -1,0 +1,85 @@
+.user-stats-container {
+  position: relative;
+}
+
+.user-stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.user-stats-table thead {
+  background: var(--hover-bg);
+}
+
+.user-stats-table th {
+  text-align: left;
+  padding: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.user-stats-table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.user-stats-table tbody tr {
+  transition: background-color 0.2s;
+}
+
+.user-stats-table tbody tr:hover {
+  background: var(--hover-bg);
+}
+
+/* Cell type styles */
+.user-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.numeric {
+  text-align: center;
+  font-weight: 500;
+}
+
+.duration {
+  color: var(--primary-color);
+  font-weight: 500;
+  text-align: center;
+}
+
+.success {
+  color: var(--success-color);
+}
+
+.warning {
+  color: var(--warning-color);
+}
+
+.error {
+  color: var(--error-color);
+}
+
+.stats-footer {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .user-stats-table {
+    font-size: 0.8rem;
+  }
+  
+  .user-stats-table th,
+  .user-stats-table td {
+    padding: 0.5rem 0.25rem;
+  }
+}
