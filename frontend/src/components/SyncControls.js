@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import DatePicker from 'react-datepicker';
 import { format } from 'date-fns';
-import { toZonedTime } from 'date-fns-tz';
+import { utcToZonedTime } from 'date-fns-tz';
 import 'react-datepicker/dist/react-datepicker.css';
 import '../styles/SyncControls.css';
 
@@ -17,8 +17,8 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     
     try {
       const nyTz = 'America/New_York';
-      const zonedFrom = toZonedTime(fromDate, nyTz);
-      const zonedTo = toZonedTime(toDate, nyTz);
+      const zonedFrom = utcToZonedTime(fromDate, nyTz);
+      const zonedTo = utcToZonedTime(toDate, nyTz);
       const fromIso = format(zonedFrom, "yyyy-MM-dd'T'HH:mm:ss");
       const toIso = format(zonedTo, "yyyy-MM-dd'T'HH:mm:ss");
       
@@ -48,7 +48,6 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={setFromDate}
             showTimeSelect
             dateFormat="Pp"
-            timeZone="America/New_York"
             placeholderText="Select start date (NY)"
             className="date-input"
           />
@@ -61,7 +60,6 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={setToDate}
             showTimeSelect
             dateFormat="Pp"
-            timeZone="America/New_York"
             placeholderText="Select end date (NY)"
             className="date-input"
           />
