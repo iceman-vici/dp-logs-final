@@ -94,18 +94,162 @@ async function insertRecording(call_id, details) {
   }
 }
 
-// GET /api/sync/download - Download and insert calls from Dialpad
+// Helper: Fetch calls from Dialpad with pagination
+async function fetchCallsFromDialpad(startedAfter, startedBefore, limit = 50) {
+  const allCalls = [];
+  let cursor = null;
+  let pageCount = 0;
+  const maxPages = 100; // Safety limit to prevent infinite loops
+  
+  console.log(`Starting to fetch calls from Dialpad...`);
+  
+  while (pageCount < maxPages) {
+    try {
+      const params = new URLSearchParams({
+        limit: limit.toString(),
+        started_after: startedAfter.toString(),
+        started_before: startedBefore.toString(),
+      });
+      
+      // Add cursor if we have one from previous page
+      if (cursor) {
+        params.append('cursor', cursor);
+      }
+      
+      console.log(`Fetching page ${pageCount + 1}, cursor: ${cursor || 'none'}`);
+      
+      const response = await axios.get('https://dialpad.com/api/v2/call', {
+        headers: {
+          'Authorization': `Bearer ${process.env.DIALPAD_TOKEN}`,
+          'Accept': 'application/json',
+        },
+        params,
+      });
+      
+      if (response.data.error) {
+        throw new Error(`Dialpad API error: ${JSON.stringify(response.data.error)}`);
+      }
+      
+      const { items, cursor: nextCursor } = response.data;
+      
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        console.log('No more calls to fetch.');
+        break;
+      }
+      
+      console.log(`Fetched ${items.length} calls on page ${pageCount + 1}`);
+      allCalls.push(...items);
+      
+      // Check if there's a next page
+      if (nextCursor && nextCursor !== cursor) {
+        cursor = nextCursor;
+        pageCount++;
+        
+        // Add a small delay to respect rate limits (1200 per minute = 20 per second)
+        await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+      } else {
+        // No more pages
+        console.log('No more pages available.');
+        break;
+      }
+    } catch (error) {
+      console.error(`Error fetching page ${pageCount + 1}:`, error.message);
+      throw error;
+    }
+  }
+  
+  console.log(`Total calls fetched: ${allCalls.length} across ${pageCount + 1} page(s)`);
+  return allCalls;
+}
+
+// GET /api/sync/download - Download and insert ALL calls from Dialpad with pagination
 router.get('/download', async (req, res) => {
-  const { from, to, limit = 50 } = req.query;
+  const { from, to } = req.query;
   if (!from || !to) {
     return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
   }
 
   const startedAfter = nyToUtcEpoch(from);
   const startedBefore = nyToUtcEpoch(to);
-  console.log(`Download params: started_after=${startedAfter}, started_before=${startedBefore}, limit=${limit}`);
+  console.log(`Download params: started_after=${startedAfter}, started_before=${startedBefore}`);
 
   let totalInserted = 0;
+  let totalFailed = 0;
+  const errors = [];
+
+  try {
+    // Fetch all calls with pagination
+    const allCalls = await fetchCallsFromDialpad(startedAfter, startedBefore);
+    
+    if (allCalls.length === 0) {
+      return res.json({ 
+        success: true, 
+        inserted: 0, 
+        message: 'No calls found in the specified date range' 
+      });
+    }
+
+    console.log(`Starting to insert ${allCalls.length} calls into database...`);
+
+    // Process all calls
+    for (const call of allCalls) {
+      try {
+        await insertCall(call);
+        if (call.recording_details) {
+          await insertRecording(call.call_id, call.recording_details);
+        }
+        totalInserted++;
+        
+        // Log progress every 10 calls
+        if (totalInserted % 10 === 0) {
+          console.log(`Progress: ${totalInserted}/${allCalls.length} calls inserted`);
+        }
+      } catch (error) {
+        console.error(`Failed to insert call ${call.call_id}:`, error.message);
+        totalFailed++;
+        errors.push({ 
+          call_id: call.call_id, 
+          error: error.message 
+        });
+      }
+    }
+
+    console.log(`Completed: ${totalInserted} inserted, ${totalFailed} failed`);
+
+    const response = {
+      success: true,
+      totalCalls: allCalls.length,
+      inserted: totalInserted,
+      failed: totalFailed,
+      message: `Successfully downloaded and inserted ${totalInserted} out of ${allCalls.length} calls`
+    };
+
+    // Include error details if there were failures
+    if (errors.length > 0 && errors.length <= 10) {
+      response.errors = errors;
+    } else if (errors.length > 10) {
+      response.errorSummary = `${errors.length} calls failed to insert. Check server logs for details.`;
+    }
+
+    res.json(response);
+  } catch (err) {
+    console.error('Download error:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: 'Failed to download calls', 
+      details: err.response?.data || err.message 
+    });
+  }
+});
+
+// GET /api/sync/download-page - Download a single page of calls (for testing)
+router.get('/download-page', async (req, res) => {
+  const { from, to, cursor, limit = 50 } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
+  }
+
+  const startedAfter = nyToUtcEpoch(from);
+  const startedBefore = nyToUtcEpoch(to);
 
   try {
     const params = new URLSearchParams({
@@ -113,6 +257,10 @@ router.get('/download', async (req, res) => {
       started_after: startedAfter.toString(),
       started_before: startedBefore.toString(),
     });
+    
+    if (cursor) {
+      params.append('cursor', cursor);
+    }
 
     const response = await axios.get('https://dialpad.com/api/v2/call', {
       headers: {
@@ -122,34 +270,18 @@ router.get('/download', async (req, res) => {
       params,
     });
 
-    console.log('API Response keys:', Object.keys(response.data));
-
-    if (response.data.error) {
-      return res.status(400).json({ error: 'Dialpad API error', details: response.data.error });
-    }
-
-    const { items } = response.data;
-
-    if (!items || !Array.isArray(items)) {
-      console.log('No items array in response.');
-      return res.json({ success: true, inserted: 0, message: 'No calls found in range' });
-    }
-
-    console.log(`Found ${items.length} calls to insert.`);
-
-    for (const item of items) {
-      await insertCall(item);
-      if (item.recording_details) {
-        await insertRecording(item.call_id, item.recording_details);
-      }
-      totalInserted++;
-      console.log(`Inserted call: ${item.call_id}`);
-    }
-
-    res.json({ success: true, inserted: totalInserted, message: `Downloaded & inserted ${totalInserted} calls` });
+    res.json({
+      success: true,
+      data: response.data,
+      itemCount: response.data.items?.length || 0,
+      nextCursor: response.data.cursor || null
+    });
   } catch (err) {
-    console.error('Download error:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Download failed', details: err.response?.data || err.message });
+    console.error('API error:', err.response?.data || err.message);
+    res.status(500).json({ 
+      error: 'Failed to fetch page', 
+      details: err.response?.data || err.message 
+    });
   }
 });
 
