@@ -13,7 +13,6 @@
     "build": "npm run build:frontend",
     "build:frontend": "cd frontend && npm run build",
     "start": "cd backend && npm start",
-    "setup": "node scripts/setup.js",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
     "docker:logs": "docker-compose logs -f"
