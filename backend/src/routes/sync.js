@@ -59,18 +59,36 @@ async function updateSyncLog(syncId, updates) {
 
 // Helper: Log sync detail
 async function logSyncDetail(syncId, callId, pageNumber, status, errorMessage = null, rawData = null) {
-  const query = `
-    INSERT INTO sync_log_details (sync_id, call_id, page_number, status, error_message, raw_data)
-    VALUES ($1, $2, $3, $4, $5, $6)
-    ON CONFLICT (sync_id, call_id) DO UPDATE SET
-      status = EXCLUDED.status,
-      error_message = EXCLUDED.error_message,
-      retry_count = sync_log_details.retry_count + 1,
-      processed_at = CURRENT_TIMESTAMP
-    RETURNING *;
+  // First check if the combination already exists
+  const checkQuery = `
+    SELECT id FROM sync_log_details 
+    WHERE sync_id = $1 AND call_id = $2
+    LIMIT 1;
   `;
   
-  await pool.query(query, [syncId, callId, pageNumber, status, errorMessage, rawData]);
+  const existing = await pool.query(checkQuery, [syncId, callId]);
+  
+  if (existing.rows.length > 0) {
+    // Update existing record
+    const updateQuery = `
+      UPDATE sync_log_details 
+      SET status = $3, 
+          error_message = $4, 
+          retry_count = retry_count + 1,
+          processed_at = CURRENT_TIMESTAMP
+      WHERE sync_id = $1 AND call_id = $2
+      RETURNING *;
+    `;
+    await pool.query(updateQuery, [syncId, callId, status, errorMessage]);
+  } else {
+    // Insert new record
+    const insertQuery = `
+      INSERT INTO sync_log_details (sync_id, call_id, page_number, status, error_message, raw_data)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+    await pool.query(insertQuery, [syncId, callId, pageNumber, status, errorMessage, rawData]);
+  }
 }
 
 // Helper: Upsert contact or user
@@ -292,6 +310,23 @@ async function processSyncJob(jobId) {
   }
 }
 
+// GET /api/sync - Sync status and info
+router.get('/', (req, res) => {
+  res.json({
+    status: 'Sync API is running',
+    endpoints: {
+      'POST /api/sync/start': 'Start a new sync job',
+      'GET /api/sync/status/:jobId': 'Get job status',
+      'GET /api/sync/logs': 'Get sync history',
+      'GET /api/sync/logs/:syncId/details': 'Get sync details',
+      'POST /api/sync/retry/:syncId': 'Retry failed calls',
+      'GET /api/sync/download-quick': 'Quick sync (50 calls)',
+      'GET /api/sync/progress/:jobId': 'SSE progress stream'
+    },
+    activeJobs: syncJobs.size
+  });
+});
+
 // POST /api/sync/start - Start a background sync job
 router.post('/start', async (req, res) => {
   const { from, to, mode = 'full' } = req.body;
@@ -430,7 +465,9 @@ router.post('/retry/:syncId', async (req, res) => {
       if (!detail.raw_data) continue;
       
       try {
-        const call = JSON.parse(detail.raw_data);
+        const call = typeof detail.raw_data === 'string' 
+          ? JSON.parse(detail.raw_data) 
+          : detail.raw_data;
         await insertCall(call, syncId);
         if (call.recording_details) {
           await insertRecording(call.call_id, call.recording_details);
@@ -503,7 +540,7 @@ router.get('/progress/:jobId', (req, res) => {
   sendUpdate();
 });
 
-// Quick sync endpoint (unchanged)
+// Quick sync endpoint
 router.get('/download-quick', async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
@@ -514,6 +551,7 @@ router.get('/download-quick', async (req, res) => {
     const syncLog = await createSyncLog(from, to, 'quick');
     const startedAfter = nyToUtcEpoch(from);
     const startedBefore = nyToUtcEpoch(to);
+    const startTime = Date.now();
     
     const rateLimiter = new RateLimiter(15, 1000);
     await rateLimiter.waitIfNeeded();
@@ -553,13 +591,15 @@ router.get('/download-quick', async (req, res) => {
       }
     }
     
+    const duration = Math.round((Date.now() - startTime) / 1000);
+    
     await updateSyncLog(syncLog.sync_id, {
       status: failedCount > 0 ? 'partial' : 'completed',
       total_calls: items?.length || 0,
       total_pages: 1,
       inserted_count: insertedCount,
       failed_count: failedCount,
-      duration_seconds: Math.round((Date.now() - syncLog.started_at) / 1000)
+      duration_seconds: duration
     });
 
     res.json({
