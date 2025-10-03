@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import DatePicker from 'react-datepicker';
 import { format } from 'date-fns';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { callsApi } from '../services/api';
 import 'react-datepicker/dist/react-datepicker.css';
 import '../styles/SyncControls.css';
 
@@ -9,6 +10,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const nyTz = 'America/New_York';
   const logContainerRef = useRef(null);
   const progressIntervalRef = useRef(null);
+  const eventSourceRef = useRef(null);
   
   // Initialize dates in NY timezone
   const getNYTime = (date = new Date()) => {
@@ -29,6 +31,8 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const [syncLogs, setSyncLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [currentJobId, setCurrentJobId] = useState(null);
+  const [syncProgress, setSyncProgress] = useState(null);
 
   // Auto-scroll logs to bottom when new logs are added
   useEffect(() => {
@@ -37,11 +41,14 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     }
   }, [syncLogs]);
 
-  // Cleanup interval on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
+      }
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
       }
     };
   }, []);
@@ -54,6 +61,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const clearLogs = () => {
     setSyncLogs([]);
     setElapsedTime(0);
+    setSyncProgress(null);
   };
 
   const handleSync = async () => {
@@ -71,7 +79,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     
     const syncMessage = syncMode === 'quick' 
       ? 'Starting Quick Sync (first 50 calls)...' 
-      : 'Starting Full Sync (streaming connection - no timeout)...';
+      : 'Starting Full Sync (background job)...';
     
     setSyncStatus(syncMessage);
     addLog(syncMessage, 'info');
@@ -85,63 +93,77 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       addLog(`Sync mode: ${syncMode.toUpperCase()}`, 'info');
       
       if (syncMode === 'full') {
-        addLog('✅ Using streaming connection - sync will continue until complete', 'success');
-        addLog('🔄 The connection will stay alive with keep-alive signals', 'info');
-        addLog('Rate limiting: 15 requests/second to respect API limits', 'info');
+        addLog('✅ Background sync - process continues on server', 'success');
+        addLog('📊 You can close this window and check progress later', 'info');
+        addLog('🔄 Real-time updates via server-sent events', 'info');
       }
       
       addLog('Connecting to backend...', 'info');
       
-      // Progress handler for streaming updates
+      // Progress handler for updates
       const handleProgress = (data) => {
+        setSyncProgress(data.progress);
+        
         if (data.type === 'error') {
-          addLog(`❌ ${data.message}`, 'error');
-        } else if (data.type === 'warning') {
-          addLog(`⚠️ ${data.message}`, 'warning');
-        } else if (data.type === 'success') {
-          addLog(`✓ ${data.message}`, 'success');
-        } else if (data.type === 'progress') {
-          addLog(data.message, 'progress');
-          if (data.progress) {
-            addLog(`Progress: ${data.progress}%`, 'info');
+          addLog(`❌ ${data.message || 'Error occurred'}`, 'error');
+        } else if (data.status === 'running') {
+          const progress = data.progress || {};
+          if (progress.message) {
+            addLog(progress.message, 'progress');
           }
-        } else {
-          addLog(data.message, 'info');
+          if (progress.totalCalls) {
+            addLog(`Progress: ${progress.insertedCount || 0}/${progress.totalCalls} calls processed`, 'info');
+            if (progress.failedCount > 0) {
+              addLog(`⚠️ ${progress.failedCount} calls failed`, 'warning');
+            }
+          }
+        } else if (data.status === 'completed') {
+          const result = data.result || {};
+          addLog('🎉 Sync completed successfully!', 'success');
+          addLog(`Total calls: ${result.totalCalls || 0}`, 'success');
+          addLog(`Successfully inserted: ${result.insertedCount || 0}`, 'success');
+          if (result.failedCount > 0) {
+            addLog(`Failed insertions: ${result.failedCount}`, 'warning');
+          }
+          addLog(`Duration: ${result.duration || 0} seconds`, 'info');
+          setSyncStatus('Sync completed');
+        } else if (data.status === 'failed') {
+          addLog(`❌ Sync failed: ${data.error || 'Unknown error'}`, 'error');
+          setSyncStatus('Sync failed');
         }
       };
       
       const result = await onSync(fromIso, toIso, syncMode, handleProgress);
       
-      // Log final results
-      addLog(`🎉 Sync completed successfully!`, 'success');
-      if (result.totalCalls !== undefined) {
-        addLog(`Total calls: ${result.totalCalls}`, 'success');
-        addLog(`Successfully inserted: ${result.inserted}`, 'success');
-        if (result.failed > 0) {
-          addLog(`Failed insertions: ${result.failed}`, 'warning');
+      if (syncMode === 'full' && result.jobId) {
+        setCurrentJobId(result.jobId);
+        addLog(`📋 Job ID: ${result.jobId}`, 'info');
+        addLog('Monitoring sync progress...', 'progress');
+        
+        // Store event source reference
+        if (result.eventSource) {
+          eventSourceRef.current = result.eventSource;
         }
-        if (result.duration) {
-          addLog(`Total time: ${result.duration}`, 'info');
+      } else if (syncMode === 'quick') {
+        // Quick sync completed immediately
+        addLog('✅ Quick sync completed!', 'success');
+        if (result.totalCalls !== undefined) {
+          addLog(`Total calls: ${result.totalCalls}`, 'success');
+          addLog(`Inserted: ${result.inserted}`, 'success');
+          if (result.failed > 0) {
+            addLog(`Failed: ${result.failed}`, 'warning');
+          }
         }
-      }
-      
-      if (result.hasMore && syncMode === 'quick') {
-        addLog('ℹ️ More calls available. Use "Full Sync" to get all.', 'warning');
-        setSyncStatus(result.message + ' - More calls available');
-      } else {
-        setSyncStatus(result.message || 'Sync completed');
+        if (result.hasMore) {
+          addLog('ℹ️ More calls available. Use "Full Sync" to get all.', 'warning');
+        }
+        setSyncStatus(result.message || 'Quick sync completed');
       }
       
       return result;
     } catch (err) {
       const errorMessage = err.message || 'Unknown error';
       addLog(`❌ Sync failed: ${errorMessage}`, 'error');
-      
-      if (errorMessage.includes('Connection lost')) {
-        addLog('🔄 Connection was lost. Please try again.', 'warning');
-        addLog('💡 If this persists, try a smaller date range', 'info');
-      }
-      
       setSyncStatus(`Sync failed: ${errorMessage}`);
       throw err;
     } finally {
@@ -163,6 +185,21 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     
     setFromDate(nyFrom);
     setToDate(nyNow);
+  };
+
+  const checkJobStatus = async () => {
+    if (!currentJobId) return;
+    
+    try {
+      const status = await callsApi.getSyncStatus(currentJobId);
+      setSyncProgress(status.progress);
+      addLog(`Job ${currentJobId}: ${status.status}`, 'info');
+      if (status.progress) {
+        addLog(`Progress: ${status.progress.insertedCount || 0}/${status.progress.totalCalls || 0}`, 'progress');
+      }
+    } catch (error) {
+      console.error('Failed to check job status:', error);
+    }
   };
 
   const getLogClassName = (type) => {
@@ -232,7 +269,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Quick Sync (First 50 calls - Fast)</span>
+          <span>Quick Sync (First 50 calls - Immediate)</span>
         </label>
         <label className="radio-label">
           <input
@@ -242,18 +279,18 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Full Sync (All calls - Streaming, No timeout)</span>
+          <span>Full Sync (All calls - Background Job)</span>
         </label>
       </div>
 
       <div className="sync-info">
         <div className="info-item">
           <span className="info-icon">🚀</span>
-          <span><strong>Quick Sync:</strong> HTTP request, ~5-10 seconds, first 50 calls</span>
+          <span><strong>Quick Sync:</strong> Immediate, first 50 calls, blocks UI</span>
         </div>
         <div className="info-item">
-          <span className="info-icon">🌊</span>
-          <span><strong>Full Sync:</strong> SSE streaming, continues until complete, all calls</span>
+          <span className="info-icon">🔧</span>
+          <span><strong>Full Sync:</strong> Background job, all calls, non-blocking</span>
         </div>
       </div>
 
@@ -263,7 +300,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
           disabled={loading || isSyncing}
           className="btn-primary"
         >
-          {isSyncing ? `Syncing... (${formatElapsedTime(elapsedTime)})` : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync (Stream)')}
+          {isSyncing ? `Syncing... (${formatElapsedTime(elapsedTime)})` : (syncMode === 'quick' ? 'Quick Sync' : 'Start Background Sync')}
         </button>
         
         <button 
@@ -273,6 +310,16 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
         >
           Refresh Tables
         </button>
+        
+        {currentJobId && (
+          <button 
+            onClick={checkJobStatus}
+            className="btn-secondary"
+            disabled={isSyncing}
+          >
+            Check Job Status
+          </button>
+        )}
         
         {syncLogs.length > 0 && (
           <button 
@@ -296,6 +343,25 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       {syncStatus && (
         <div className={`sync-status ${syncStatus.includes('failed') ? 'error' : 'success'}`}>
           {syncStatus}
+        </div>
+      )}
+      
+      {syncProgress && (
+        <div className="sync-progress-bar">
+          <div className="progress-info">
+            <span>Pages: {syncProgress.pageCount || 0}</span>
+            <span>Calls: {syncProgress.totalCalls || 0}</span>
+            <span>Inserted: {syncProgress.insertedCount || 0}</span>
+            <span>Failed: {syncProgress.failedCount || 0}</span>
+          </div>
+          {syncProgress.totalCalls > 0 && (
+            <div className="progress-bar">
+              <div 
+                className="progress-fill"
+                style={{ width: `${(syncProgress.insertedCount / syncProgress.totalCalls) * 100}%` }}
+              ></div>
+            </div>
+          )}
         </div>
       )}
       
@@ -324,7 +390,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       <div className="timezone-info">
         <small>All times are in New York timezone (America/New_York)</small>
         <br />
-        <small className="rate-limit-info">Rate Limit: 15 req/sec | Keep-Alive: 30 sec intervals</small>
+        <small className="rate-limit-info">Background sync runs server-side with automatic retry for failures</small>
       </div>
     </div>
   );

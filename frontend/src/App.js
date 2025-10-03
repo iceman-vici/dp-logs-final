@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import CallsTable from './components/CallsTable';
 import UserStatsTable from './components/UserStatsTable';
 import SyncControls from './components/SyncControls';
+import SyncLogs from './components/SyncLogs';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
 import { callsApi } from './services/api';
@@ -15,6 +16,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
+  const [showSyncLogs, setShowSyncLogs] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -64,19 +66,38 @@ function App() {
       if (syncMode === 'quick') {
         // Quick sync uses regular HTTP request
         result = await callsApi.downloadCallsQuick(fromDate, toDate);
+        toast.success(result.message || 'Quick sync completed');
+        setLastSync(new Date());
+        // Refresh data
+        await Promise.all([
+          fetchCalls(),
+          fetchUserStats()
+        ]);
       } else {
-        // Full sync uses SSE streaming
-        result = await callsApi.downloadCallsStream(fromDate, toDate, onProgress);
+        // Full sync starts a background job
+        result = await callsApi.startSync(fromDate, toDate, 'full');
+        toast.info(`Sync job started: ${result.jobId}`);
+        
+        // Subscribe to progress updates
+        if (result.jobId && onProgress) {
+          const eventSource = callsApi.subscribeSyncProgress(result.jobId, (data) => {
+            onProgress(data);
+            
+            if (data.status === 'completed') {
+              toast.success('Sync completed successfully');
+              setLastSync(new Date());
+              // Refresh data
+              fetchCalls();
+              fetchUserStats();
+            } else if (data.status === 'failed') {
+              toast.error('Sync failed');
+            }
+          });
+          
+          // Store event source for cleanup if needed
+          result.eventSource = eventSource;
+        }
       }
-      
-      toast.success(result.message || 'Sync completed successfully');
-      setLastSync(new Date());
-      
-      // Refresh data after sync
-      await Promise.all([
-        fetchCalls(),
-        fetchUserStats()
-      ]);
       
       return result;
     } catch (err) {
@@ -117,17 +138,30 @@ function App() {
           loading={loading}
         />
         
-        <div className="dashboard-grid">
-          <section className="calls-section">
-            <h2>Recent Calls</h2>
-            <CallsTable calls={calls} loading={loading} />
-          </section>
-          
-          <section className="stats-section">
-            <h2>User Call Statistics</h2>
-            <UserStatsTable stats={userStats} loading={loading} />
-          </section>
+        <div className="view-controls">
+          <button 
+            onClick={() => setShowSyncLogs(!showSyncLogs)}
+            className="btn-toggle-view"
+          >
+            {showSyncLogs ? '📊 Show Dashboard' : '📋 Show Sync Logs'}
+          </button>
         </div>
+        
+        {showSyncLogs ? (
+          <SyncLogs />
+        ) : (
+          <div className="dashboard-grid">
+            <section className="calls-section">
+              <h2>Recent Calls</h2>
+              <CallsTable calls={calls} loading={loading} />
+            </section>
+            
+            <section className="stats-section">
+              <h2>User Call Statistics</h2>
+              <UserStatsTable stats={userStats} loading={loading} />
+            </section>
+          </div>
+        )}
       </main>
 
       <ToastContainer 
