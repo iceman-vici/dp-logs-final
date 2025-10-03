@@ -36,17 +36,18 @@ cd dp-logs-final
 # Copy example environment file
 cp .env.example .env
 
-# Edit .env and add your Dialpad API token and webhook secret
+# Edit .env and add your Dialpad API token
 nano .env  # or use your preferred editor
 ```
 
-### 3. Start with Docker
+### 3. Setup database and start services
 
 ```bash
-# Using Make (recommended)
-make install  # Complete setup, build, and start
+# Run the automated setup script (recommended)
+chmod +x setup-database.sh
+./setup-database.sh
 
-# OR using Docker Compose directly
+# OR manually with Docker Compose
 docker-compose up -d
 ```
 
@@ -108,18 +109,12 @@ Receive call events in real-time as they happen via Dialpad webhooks.
 
 ## Docker Commands
 
-### Using Make (Recommended)
+### Using the Setup Script (Recommended)
 
 ```bash
-make help        # Show all available commands
-make setup       # Initial setup
-make build       # Build containers
-make up          # Start services
-make down        # Stop services
-make logs        # View logs
-make db-shell    # Access PostgreSQL
-make status      # Check service status
-make clean       # Clean up everything
+# Complete automated setup
+chmod +x setup-database.sh
+./setup-database.sh
 ```
 
 ### Using Docker Compose
@@ -134,49 +129,71 @@ docker-compose logs -f
 # Stop services
 docker-compose down
 
-# Reset database
+# Reset database and start fresh
 docker-compose down -v
-docker-compose up -d
+./setup-database.sh
 
 # Access database
-docker-compose exec postgres psql -U postgres -d dialpad_logs
+docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db
 ```
 
 ## Database Management
 
+### Database Credentials
+
+The default database configuration is:
+- **Database**: `dialpad_calls_db`
+- **User**: `dp_calls`
+- **Password**: `dp_logs`
+- **Port**: `5432`
+
 ### Access PostgreSQL
 
 ```bash
-# Using Make
-make db-shell
+# Access database directly
+docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db
 
-# Using Docker
-docker-compose exec postgres psql -U postgres -d dialpad_logs
+# Quick connection test
+docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db -c "SELECT 'Working!' as status;"
 ```
 
-### Run Webhook Migration
+### Database Setup
+
+The `setup-database.sh` script will:
+1. Stop and clean existing containers
+2. Start PostgreSQL with correct credentials
+3. Create the database
+4. Run all migrations in order:
+   - `schema.sql` - Main tables
+   - `migration-webhook-logs.sql` - Webhook tables
+   - Other migration files
+5. Verify the setup
+
+### Manual Database Setup
+
+If you prefer manual setup:
 
 ```bash
-# Create webhook_logs table and related objects
-docker-compose exec postgres psql -U postgres -d dialpad_logs \
-  -f /docker-entrypoint-initdb.d/migration-webhook-logs.sql
+# 1. Start services
+docker-compose up -d
+sleep 15
+
+# 2. Run migrations
+docker-compose exec -T postgres psql -U dp_calls -d dialpad_calls_db < backend/database/schema.sql
+docker-compose exec -T postgres psql -U dp_calls -d dialpad_calls_db < backend/database/migration-webhook-logs.sql
+
+# 3. Verify
+docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db -c "\dt"
 ```
 
 ### Backup Database
 
 ```bash
 # Create backup
-make backup-db
+docker-compose exec postgres pg_dump -U dp_calls dialpad_calls_db > backup_$(date +%Y%m%d_%H%M%S).sql
 
 # Restore backup
-make restore-db FILE=backups/backup_20240101_120000.sql
-```
-
-### Reset Database
-
-```bash
-# WARNING: This deletes all data
-make db-reset
+docker-compose exec -T postgres psql -U dp_calls -d dialpad_calls_db < backup_file.sql
 ```
 
 ## Development
@@ -227,8 +244,10 @@ dp-logs-final/
 ├── docs/
 │   ├── WEBHOOK_SETUP.md          # Complete webhook guide
 │   └── WEBHOOK_QUICK_REFERENCE.md # Quick reference
-├── docker-compose.yml    # Docker configuration
-├── Makefile             # Convenience commands
+├── scripts/
+│   └── test-webhook.sh           # Webhook testing script
+├── setup-database.sh             # Automated database setup
+├── docker-compose.yml            # Docker configuration
 └── README.md
 ```
 
@@ -265,12 +284,12 @@ dp-logs-final/
 DIALPAD_TOKEN=your_dialpad_api_token
 WEBHOOK_SECRET=dp_call_logs  # Must match Dialpad webhook config
 
-# Database (Docker defaults)
+# Database Configuration
 DB_HOST=postgres
 DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=dialpad_logs
+DB_USER=dp_calls
+DB_PASSWORD=dp_logs
+DB_NAME=dialpad_calls_db
 
 # API
 PORT=3001
@@ -285,17 +304,19 @@ RATE_LIMIT_MAX_REQUESTS=100
 
 ### 1. Configure Environment
 
-Add to your `.env` file:
+Your `.env` should include:
 ```bash
 WEBHOOK_SECRET=dp_call_logs
+DIALPAD_TOKEN=your_actual_token
 ```
 
-### 2. Run Database Migration
+### 2. Run Setup Script
 
 ```bash
-docker-compose exec postgres psql -U postgres -d dialpad_logs \
-  -f /app/database/migration-webhook-logs.sql
+./setup-database.sh
 ```
+
+This will create all necessary tables including `webhook_logs`.
 
 ### 3. Configure Dialpad
 
@@ -308,16 +329,12 @@ Set up your webhook in Dialpad with:
 ### 4. Test the Webhook
 
 ```bash
-# Check health
+# Run automated tests
+bash scripts/test-webhook.sh
+
+# Or manual tests
 curl http://localhost:3001/webhook/health
-
-# View statistics
 curl http://localhost:3001/webhook/stats
-
-# Test (dev only)
-curl -X POST http://localhost:3001/webhook/test \
-  -H "Content-Type: application/json" \
-  -d '{"call":{"id":"test123","duration":120}}'
 ```
 
 For detailed setup instructions, see [WEBHOOK_SETUP.md](docs/WEBHOOK_SETUP.md)
@@ -351,32 +368,53 @@ SELECT * FROM webhook_logs
 WHERE status = 'failed' 
 ORDER BY processed_at DESC 
 LIMIT 10;
+
+-- Check table counts
+SELECT 
+    'calls' as table_name, COUNT(*) as records FROM calls
+UNION ALL
+SELECT 'contacts', COUNT(*) FROM contacts
+UNION ALL
+SELECT 'users', COUNT(*) FROM users
+UNION ALL
+SELECT 'webhook_logs', COUNT(*) FROM webhook_logs;
 ```
 
 ## Troubleshooting
 
-### Port Already in Use
-
-```bash
-# Stop services using the ports
-sudo lsof -i :3000  # Find process using port 3000
-sudo lsof -i :3001  # Find process using port 3001
-sudo lsof -i :5432  # Find process using port 5432
-
-# Or change ports in docker-compose.yml
-```
-
 ### Database Connection Issues
 
 ```bash
-# Check if database is running
-make test-db
+# Test database connection
+docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db -c "SELECT 'Connected!' as status;"
+
+# Check if database exists
+docker-compose exec postgres psql -U dp_calls -c "\l" | grep dialpad_calls_db
 
 # View database logs
-make logs-db
+docker-compose logs postgres
 
 # Restart database
 docker-compose restart postgres
+```
+
+### Reset and Rebuild
+
+```bash
+# Complete cleanup and fresh start
+docker-compose down -v
+./setup-database.sh
+```
+
+### Port Already in Use
+
+```bash
+# Find processes using ports
+sudo lsof -i :3000  # Frontend
+sudo lsof -i :3001  # Backend
+sudo lsof -i :5432  # Database
+
+# Or change ports in docker-compose.yml
 ```
 
 ### Webhook Issues
@@ -392,19 +430,12 @@ curl http://localhost:3001/webhook/logs | grep -i error
 NODE_ENV=development docker-compose up
 ```
 
-### Reset Everything
-
-```bash
-# Complete cleanup and fresh start
-make clean
-make install
-```
-
 ## Security Notes
 
 - **JWT Authentication**: Webhooks use JWT signature verification
 - **HTTPS Required**: Use HTTPS in production for webhook endpoints
 - **Secret Management**: Never commit secrets to version control
+- **Database Credentials**: Change default credentials in production
 - **Rate Limiting**: API endpoints have rate limiting enabled
 - **CORS**: Configure CORS_ORIGINS for production
 
@@ -412,6 +443,7 @@ make install
 
 - [Webhook Setup Guide](docs/WEBHOOK_SETUP.md) - Complete webhook configuration
 - [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md) - Quick commands and troubleshooting
+- [Changelog](docs/CHANGELOG_WEBHOOK.md) - Webhook implementation details
 
 ## License
 
