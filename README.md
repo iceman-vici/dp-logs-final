@@ -1,16 +1,18 @@
 # Dialpad Logs System
 
-A comprehensive call logging and analytics system for Dialpad, featuring automatic synchronization, retry capabilities, and detailed logging.
+A comprehensive call logging and analytics system for Dialpad, featuring automatic synchronization, webhook support, retry capabilities, and detailed logging.
 
 ## Features
 
 - 📞 **Call Data Sync**: Automatic synchronization with Dialpad API
+- 🎣 **Webhook Support**: Real-time call events via Dialpad webhooks with JWT authentication
 - 🔄 **Background Processing**: Non-blocking sync operations
 - 🔁 **Retry Mechanism**: Automatic retry for failed call insertions
 - 📊 **Analytics Dashboard**: Real-time call statistics and user metrics
 - 📋 **Detailed Logging**: Complete audit trail of all sync operations
 - 🌐 **Timezone Support**: Proper NY timezone handling
 - 🐳 **Docker Support**: Complete containerized deployment
+- 🔐 **Secure Webhooks**: JWT signature verification for webhook authenticity
 
 ## Prerequisites
 
@@ -34,7 +36,7 @@ cd dp-logs-final
 # Copy example environment file
 cp .env.example .env
 
-# Edit .env and add your Dialpad API token
+# Edit .env and add your Dialpad API token and webhook secret
 nano .env  # or use your preferred editor
 ```
 
@@ -52,7 +54,57 @@ docker-compose up -d
 
 - **Frontend**: http://localhost:3000
 - **Backend API**: http://localhost:3001
+- **Webhook Endpoint**: http://localhost:3001/webhook
 - **pgAdmin**: http://localhost:5050 (admin@dialpad.local / admin)
+
+## Data Collection Methods
+
+### Method 1: API Sync (Polling)
+
+The traditional method of periodically fetching call logs from the Dialpad API.
+
+**Use Cases:**
+- Historical data imports
+- Scheduled batch processing
+- Backup sync method
+
+**Endpoints:**
+- `POST /api/sync/start` - Start background sync job
+- `GET /api/sync/status/:jobId` - Check job status
+- `GET /api/sync/logs` - Get sync history
+
+### Method 2: Webhooks (Real-time)
+
+Receive call events in real-time as they happen via Dialpad webhooks.
+
+**Use Cases:**
+- Real-time call monitoring
+- Immediate event processing
+- Live dashboards
+
+**Configuration:**
+```json
+{
+  "webhook": {
+    "hook_url": "https://your-domain.com/webhook",
+    "signature": {
+      "algo": "HS256",
+      "secret": "dp_call_logs",
+      "type": "jwt"
+    }
+  }
+}
+```
+
+**Endpoints:**
+- `POST /webhook` - Receive call events (JWT auth required)
+- `GET /webhook/health` - Health check
+- `GET /webhook/stats` - View webhook statistics
+- `GET /webhook/logs` - View recent webhook logs
+
+📚 **Documentation:**
+- [Detailed Webhook Setup Guide](docs/WEBHOOK_SETUP.md)
+- [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md)
 
 ## Docker Commands
 
@@ -100,6 +152,14 @@ make db-shell
 
 # Using Docker
 docker-compose exec postgres psql -U postgres -d dialpad_logs
+```
+
+### Run Webhook Migration
+
+```bash
+# Create webhook_logs table and related objects
+docker-compose exec postgres psql -U postgres -d dialpad_logs \
+  -f /docker-entrypoint-initdb.d/migration-webhook-logs.sql
 ```
 
 ### Backup Database
@@ -150,10 +210,13 @@ dp-logs-final/
 ├── backend/
 │   ├── src/
 │   │   ├── config/      # Database and app configuration
-│   │   ├── routes/      # API endpoints
+│   │   ├── routes/      # API endpoints (including webhook)
+│   │   ├── services/    # Business logic (webhook, sync, etc.)
+│   │   ├── middleware/  # Authentication and request processing
 │   │   └── utils/       # Helper functions
 │   ├── database/
-│   │   └── schema.sql   # Database schema
+│   │   ├── schema.sql   # Main database schema
+│   │   └── migration-webhook-logs.sql  # Webhook tables
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/
@@ -161,6 +224,9 @@ dp-logs-final/
 │   │   ├── services/    # API services
 │   │   └── styles/      # CSS files
 │   └── Dockerfile
+├── docs/
+│   ├── WEBHOOK_SETUP.md          # Complete webhook guide
+│   └── WEBHOOK_QUICK_REFERENCE.md # Quick reference
 ├── docker-compose.yml    # Docker configuration
 ├── Makefile             # Convenience commands
 └── README.md
@@ -168,7 +234,7 @@ dp-logs-final/
 
 ## API Endpoints
 
-### Sync Endpoints
+### Sync Endpoints (API Polling Method)
 
 - `POST /api/sync/start` - Start background sync job
 - `GET /api/sync/status/:jobId` - Check job status
@@ -176,6 +242,15 @@ dp-logs-final/
 - `GET /api/sync/logs/:syncId/details` - Get sync details
 - `POST /api/sync/retry/:syncId` - Retry failed calls
 - `GET /api/sync/download-quick` - Quick sync (50 calls)
+
+### Webhook Endpoints (Real-time Method)
+
+- `POST /webhook` - Receive call events (JWT auth)
+- `GET /webhook/health` - Health check
+- `GET /webhook/stats` - View statistics
+- `POST /webhook/stats/reset` - Reset statistics
+- `GET /webhook/logs?limit=50` - View recent logs
+- `POST /webhook/test` - Test endpoint (dev only)
 
 ### Data Endpoints
 
@@ -188,6 +263,7 @@ dp-logs-final/
 ```env
 # Required
 DIALPAD_TOKEN=your_dialpad_api_token
+WEBHOOK_SECRET=dp_call_logs  # Must match Dialpad webhook config
 
 # Database (Docker defaults)
 DB_HOST=postgres
@@ -199,6 +275,82 @@ DB_NAME=dialpad_logs
 # API
 PORT=3001
 CORS_ORIGINS=http://localhost:3000
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+```
+
+## Webhook Setup
+
+### 1. Configure Environment
+
+Add to your `.env` file:
+```bash
+WEBHOOK_SECRET=dp_call_logs
+```
+
+### 2. Run Database Migration
+
+```bash
+docker-compose exec postgres psql -U postgres -d dialpad_logs \
+  -f /app/database/migration-webhook-logs.sql
+```
+
+### 3. Configure Dialpad
+
+Set up your webhook in Dialpad with:
+- **URL**: `https://your-domain.com/webhook`
+- **Algorithm**: HS256
+- **Secret**: `dp_call_logs`
+- **Type**: JWT
+
+### 4. Test the Webhook
+
+```bash
+# Check health
+curl http://localhost:3001/webhook/health
+
+# View statistics
+curl http://localhost:3001/webhook/stats
+
+# Test (dev only)
+curl -X POST http://localhost:3001/webhook/test \
+  -H "Content-Type: application/json" \
+  -d '{"call":{"id":"test123","duration":120}}'
+```
+
+For detailed setup instructions, see [WEBHOOK_SETUP.md](docs/WEBHOOK_SETUP.md)
+
+## Monitoring
+
+### Check Webhook Activity
+
+```bash
+# View webhook statistics
+curl http://localhost:3001/webhook/stats
+
+# View recent webhook logs
+curl http://localhost:3001/webhook/logs?limit=20
+
+# Check health
+curl http://localhost:3001/webhook/health
+```
+
+### Database Queries
+
+```sql
+-- View webhook statistics
+SELECT * FROM webhook_stats_view;
+
+-- View recent webhook activity
+SELECT * FROM webhook_recent_activity LIMIT 20;
+
+-- Check for failed webhooks
+SELECT * FROM webhook_logs 
+WHERE status = 'failed' 
+ORDER BY processed_at DESC 
+LIMIT 10;
 ```
 
 ## Troubleshooting
@@ -227,6 +379,19 @@ make logs-db
 docker-compose restart postgres
 ```
 
+### Webhook Issues
+
+```bash
+# Check webhook health
+curl http://localhost:3001/webhook/health
+
+# View recent webhook errors
+curl http://localhost:3001/webhook/logs | grep -i error
+
+# Enable debug mode
+NODE_ENV=development docker-compose up
+```
+
 ### Reset Everything
 
 ```bash
@@ -234,6 +399,19 @@ docker-compose restart postgres
 make clean
 make install
 ```
+
+## Security Notes
+
+- **JWT Authentication**: Webhooks use JWT signature verification
+- **HTTPS Required**: Use HTTPS in production for webhook endpoints
+- **Secret Management**: Never commit secrets to version control
+- **Rate Limiting**: API endpoints have rate limiting enabled
+- **CORS**: Configure CORS_ORIGINS for production
+
+## Documentation
+
+- [Webhook Setup Guide](docs/WEBHOOK_SETUP.md) - Complete webhook configuration
+- [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md) - Quick commands and troubleshooting
 
 ## License
 
