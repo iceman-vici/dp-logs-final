@@ -65,9 +65,12 @@ services:
     depends_on:
       - backend
     environment:
-      # IMPORTANT: Update this with your server IP for external access
+      # IMPORTANT: Update these with your server IP for external access
       # Example: REACT_APP_API_URL=http://YOUR_SERVER_IP:3001/api
       REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:3001/api}
+      # WebSocket URL - must match your server IP
+      # Example: REACT_APP_WS_URL=http://YOUR_SERVER_IP:3001
+      REACT_APP_WS_URL: ${REACT_APP_WS_URL:-http://localhost:3001}
       WDS_SOCKET_PORT: 3000
     ports:
       - "3000:3000"
