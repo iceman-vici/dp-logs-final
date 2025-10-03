@@ -21,42 +21,104 @@ A comprehensive call logging and analytics system for Dialpad, featuring automat
 - Node.js 18+ (for local development)
 - PostgreSQL 15+ (if not using Docker)
 
-## Quick Start with Docker
+## Quick Start
 
-### 1. Clone the repository
+### Option 1: Interactive Configuration (Recommended)
+
+```bash
+git clone https://github.com/iceman-vici/dp-logs-final.git
+cd dp-logs-final
+
+# Run interactive configuration
+chmod +x configure.sh
+./configure.sh
+```
+
+The script will:
+- Auto-detect your server IP
+- Configure CORS and API URLs
+- Set up your Dialpad token
+- Run database setup
+- Build and start all services
+
+### Option 2: Manual Setup
+
+#### 1. Clone the repository
 
 ```bash
 git clone https://github.com/iceman-vici/dp-logs-final.git
 cd dp-logs-final
 ```
 
-### 2. Setup environment
+#### 2. Configure for your server
 
 ```bash
 # Copy example environment file
 cp .env.example .env
 
-# Edit .env and add your Dialpad API token
-nano .env  # or use your preferred editor
+# Edit and configure
+nano .env
 ```
 
-### 3. Setup database and start services
+**Important:** Update these settings for external access:
+```bash
+# Replace YOUR_SERVER_IP with your actual IP or domain
+CORS_ORIGINS=http://localhost:3000,http://YOUR_SERVER_IP:3000,http://YOUR_SERVER_IP:3001
+REACT_APP_API_URL=http://YOUR_SERVER_IP:3001/api
+DIALPAD_TOKEN=your_actual_token
+```
+
+📚 **See [Server Configuration Guide](docs/SERVER_CONFIGURATION.md) for detailed instructions**
+
+#### 3. Setup and start
 
 ```bash
-# Run the automated setup script (recommended)
+# Setup database
 chmod +x setup-database.sh
 ./setup-database.sh
 
-# OR manually with Docker Compose
+# Rebuild frontend with your server IP
+docker-compose build --no-cache frontend
+
+# Start all services
 docker-compose up -d
 ```
 
-### 4. Access the application
+#### 4. Access the application
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:3001
-- **Webhook Endpoint**: http://localhost:3001/webhook
-- **pgAdmin**: http://localhost:5050 (admin@dialpad.local / admin)
+- **Frontend**: http://YOUR_SERVER_IP:3000
+- **Backend API**: http://YOUR_SERVER_IP:3001
+- **Webhook Endpoint**: http://YOUR_SERVER_IP:3001/webhook
+- **pgAdmin**: http://YOUR_SERVER_IP:5050 (admin@dialpad.local / admin)
+
+## Configuration
+
+### For Local Development
+
+Use default `localhost` configuration:
+```bash
+CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+REACT_APP_API_URL=http://localhost:3001/api
+```
+
+### For External Access
+
+Update with your server IP or domain:
+```bash
+# Example with IP address
+CORS_ORIGINS=http://localhost:3000,http://194.163.40.197:3000,http://194.163.40.197:3001
+REACT_APP_API_URL=http://194.163.40.197:3001/api
+
+# Example with domain
+CORS_ORIGINS=https://calls.yourdomain.com
+REACT_APP_API_URL=https://calls.yourdomain.com/api
+```
+
+⚠️ **Important:** After changing `REACT_APP_API_URL`, you must rebuild the frontend:
+```bash
+docker-compose build --no-cache frontend
+docker-compose up -d
+```
 
 ## Data Collection Methods
 
@@ -106,6 +168,7 @@ Receive call events in real-time as they happen via Dialpad webhooks.
 📚 **Documentation:**
 - [Detailed Webhook Setup Guide](docs/WEBHOOK_SETUP.md)
 - [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md)
+- [Server Configuration Guide](docs/SERVER_CONFIGURATION.md)
 
 ## Docker Commands
 
@@ -196,61 +259,6 @@ docker-compose exec postgres pg_dump -U dp_calls dialpad_calls_db > backup_$(dat
 docker-compose exec -T postgres psql -U dp_calls -d dialpad_calls_db < backup_file.sql
 ```
 
-## Development
-
-### Local Development with Docker
-
-```bash
-# Start in development mode with hot reload
-docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
-### Manual Setup (Without Docker)
-
-```bash
-# Backend
-cd backend
-cp .env.example .env  # Configure database and API token
-npm install
-npm run dev
-
-# Frontend
-cd frontend
-npm install
-npm start
-```
-
-## Project Structure
-
-```
-dp-logs-final/
-├── backend/
-│   ├── src/
-│   │   ├── config/      # Database and app configuration
-│   │   ├── routes/      # API endpoints (including webhook)
-│   │   ├── services/    # Business logic (webhook, sync, etc.)
-│   │   ├── middleware/  # Authentication and request processing
-│   │   └── utils/       # Helper functions
-│   ├── database/
-│   │   ├── schema.sql   # Main database schema
-│   │   └── migration-webhook-logs.sql  # Webhook tables
-│   └── Dockerfile
-├── frontend/
-│   ├── src/
-│   │   ├── components/  # React components
-│   │   ├── services/    # API services
-│   │   └── styles/      # CSS files
-│   └── Dockerfile
-├── docs/
-│   ├── WEBHOOK_SETUP.md          # Complete webhook guide
-│   └── WEBHOOK_QUICK_REFERENCE.md # Quick reference
-├── scripts/
-│   └── test-webhook.sh           # Webhook testing script
-├── setup-database.sh             # Automated database setup
-├── docker-compose.yml            # Docker configuration
-└── README.md
-```
-
 ## API Endpoints
 
 ### Sync Endpoints (API Polling Method)
@@ -282,7 +290,7 @@ dp-logs-final/
 ```env
 # Required
 DIALPAD_TOKEN=your_dialpad_api_token
-WEBHOOK_SECRET=dp_call_logs  # Must match Dialpad webhook config
+WEBHOOK_SECRET=dp_call_logs
 
 # Database Configuration
 DB_HOST=postgres
@@ -291,105 +299,55 @@ DB_USER=dp_calls
 DB_PASSWORD=dp_logs
 DB_NAME=dialpad_calls_db
 
-# API
+# Server Configuration
 PORT=3001
-CORS_ORIGINS=http://localhost:3000
+NODE_ENV=development
+
+# CORS - Update with your server IP/domain
+CORS_ORIGINS=http://localhost:3000,http://YOUR_IP:3000
+
+# Frontend API URL - Update with your server IP/domain
+REACT_APP_API_URL=http://YOUR_IP:3001/api
 
 # Rate Limiting
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
 ```
 
-## Webhook Setup
-
-### 1. Configure Environment
-
-Your `.env` should include:
-```bash
-WEBHOOK_SECRET=dp_call_logs
-DIALPAD_TOKEN=your_actual_token
-```
-
-### 2. Run Setup Script
-
-```bash
-./setup-database.sh
-```
-
-This will create all necessary tables including `webhook_logs`.
-
-### 3. Configure Dialpad
-
-Set up your webhook in Dialpad with:
-- **URL**: `https://your-domain.com/webhook`
-- **Algorithm**: HS256
-- **Secret**: `dp_call_logs`
-- **Type**: JWT
-
-### 4. Test the Webhook
-
-```bash
-# Run automated tests
-bash scripts/test-webhook.sh
-
-# Or manual tests
-curl http://localhost:3001/webhook/health
-curl http://localhost:3001/webhook/stats
-```
-
-For detailed setup instructions, see [WEBHOOK_SETUP.md](docs/WEBHOOK_SETUP.md)
-
-## Monitoring
-
-### Check Webhook Activity
-
-```bash
-# View webhook statistics
-curl http://localhost:3001/webhook/stats
-
-# View recent webhook logs
-curl http://localhost:3001/webhook/logs?limit=20
-
-# Check health
-curl http://localhost:3001/webhook/health
-```
-
-### Database Queries
-
-```sql
--- View webhook statistics
-SELECT * FROM webhook_stats_view;
-
--- View recent webhook activity
-SELECT * FROM webhook_recent_activity LIMIT 20;
-
--- Check for failed webhooks
-SELECT * FROM webhook_logs 
-WHERE status = 'failed' 
-ORDER BY processed_at DESC 
-LIMIT 10;
-
--- Check table counts
-SELECT 
-    'calls' as table_name, COUNT(*) as records FROM calls
-UNION ALL
-SELECT 'contacts', COUNT(*) FROM contacts
-UNION ALL
-SELECT 'users', COUNT(*) FROM users
-UNION ALL
-SELECT 'webhook_logs', COUNT(*) FROM webhook_logs;
-```
-
 ## Troubleshooting
+
+### CORS Errors
+
+**Problem:** "Response body is not available to scripts (Reason: CORS Failed)"
+
+**Solution:**
+1. Update `CORS_ORIGINS` in `.env` with your server IP
+2. Restart backend: `docker-compose restart backend`
+
+Example:
+```bash
+CORS_ORIGINS=http://localhost:3000,http://194.163.40.197:3000,http://194.163.40.197:3001
+```
+
+### Frontend Calling localhost
+
+**Problem:** Frontend makes requests to `localhost:3001` instead of your server IP
+
+**Solution:**
+1. Update `REACT_APP_API_URL` in `.env`
+2. Rebuild frontend: `docker-compose build --no-cache frontend`
+3. Restart: `docker-compose up -d`
+
+Example:
+```bash
+REACT_APP_API_URL=http://194.163.40.197:3001/api
+```
 
 ### Database Connection Issues
 
 ```bash
 # Test database connection
 docker-compose exec postgres psql -U dp_calls -d dialpad_calls_db -c "SELECT 'Connected!' as status;"
-
-# Check if database exists
-docker-compose exec postgres psql -U dp_calls -c "\l" | grep dialpad_calls_db
 
 # View database logs
 docker-compose logs postgres
@@ -398,12 +356,14 @@ docker-compose logs postgres
 docker-compose restart postgres
 ```
 
-### Reset and Rebuild
+### Complete Reset
 
 ```bash
 # Complete cleanup and fresh start
 docker-compose down -v
 ./setup-database.sh
+docker-compose build --no-cache frontend
+docker-compose up -d
 ```
 
 ### Port Already in Use
@@ -413,21 +373,6 @@ docker-compose down -v
 sudo lsof -i :3000  # Frontend
 sudo lsof -i :3001  # Backend
 sudo lsof -i :5432  # Database
-
-# Or change ports in docker-compose.yml
-```
-
-### Webhook Issues
-
-```bash
-# Check webhook health
-curl http://localhost:3001/webhook/health
-
-# View recent webhook errors
-curl http://localhost:3001/webhook/logs | grep -i error
-
-# Enable debug mode
-NODE_ENV=development docker-compose up
 ```
 
 ## Security Notes
@@ -437,13 +382,20 @@ NODE_ENV=development docker-compose up
 - **Secret Management**: Never commit secrets to version control
 - **Database Credentials**: Change default credentials in production
 - **Rate Limiting**: API endpoints have rate limiting enabled
-- **CORS**: Configure CORS_ORIGINS for production
+- **CORS**: Always specify exact origins in production (never use `*`)
 
 ## Documentation
 
+- [Server Configuration Guide](docs/SERVER_CONFIGURATION.md) - **External access setup**
 - [Webhook Setup Guide](docs/WEBHOOK_SETUP.md) - Complete webhook configuration
-- [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md) - Quick commands and troubleshooting
+- [Webhook Quick Reference](docs/WEBHOOK_QUICK_REFERENCE.md) - Quick commands
 - [Changelog](docs/CHANGELOG_WEBHOOK.md) - Webhook implementation details
+
+## Scripts
+
+- `configure.sh` - Interactive configuration wizard
+- `setup-database.sh` - Automated database setup
+- `scripts/test-webhook.sh` - Webhook testing
 
 ## License
 
