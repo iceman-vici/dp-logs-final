@@ -7,11 +7,13 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { pool } = require('./config/database');
 const { setupSocketHandlers } = require('./sockets/syncSocket');
+const SyncScheduler = require('./services/scheduler');
 
 // Import routes
 const callsRouter = require('./routes/calls');
 const statsRouter = require('./routes/stats');
 const syncRouter = require('./routes/sync');
+const scheduleRouter = require('./routes/schedule');
 
 const app = express();
 const httpServer = createServer(app);
@@ -29,6 +31,10 @@ const io = new Server(httpServer, {
 
 // Make io accessible to routes
 app.set('io', io);
+
+// Initialize scheduler
+const scheduler = new SyncScheduler(io);
+app.set('scheduler', scheduler);
 
 // Setup Socket.IO handlers
 setupSocketHandlers(io);
@@ -48,7 +54,8 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     timestamp: new Date().toISOString(),
-    websocket: io.engine.clientsCount || 0
+    websocket: io.engine.clientsCount || 0,
+    scheduler: scheduler.isInitialized ? 'active' : 'inactive'
   });
 });
 
@@ -56,6 +63,7 @@ app.get('/health', (req, res) => {
 app.use('/api/calls', callsRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/sync', syncRouter);
+app.use('/api/schedule', scheduleRouter);
 
 // Test database connection
 app.get('/api/test-db', async (req, res) => {
@@ -91,7 +99,7 @@ app.use((req, res) => {
 });
 
 // Start server
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`API server running on http://localhost:${PORT}`);
   console.log(`WebSocket server ready on ws://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -102,6 +110,13 @@ httpServer.listen(PORT, () => {
       console.error('Error connecting to database:', err);
     } else {
       console.log('Database connected successfully at:', res.rows[0].now);
+      
+      // Initialize scheduler after database is connected
+      scheduler.initialize().then(() => {
+        console.log('Scheduler initialized and ready');
+      }).catch(error => {
+        console.error('Failed to initialize scheduler:', error);
+      });
     }
   });
 });
