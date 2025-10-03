@@ -9,6 +9,7 @@ const { pool } = require('./src/config/database');
 const callsRouter = require('./src/routes/calls');
 const statsRouter = require('./src/routes/stats');
 const syncRouter = require('./src/routes/sync');
+const webhookRouter = require('./src/routes/webhook');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -24,16 +25,17 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-// Rate limiting
+// Body parsing middleware (before rate limiting for webhooks)
+app.use(express.json({ limit: '10mb' })); // Increase limit for webhook payloads
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Rate limiting for API routes (not webhook)
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+  skip: (req) => req.path.startsWith('/webhook') // Skip rate limiting for webhooks
 });
 app.use('/api', limiter);
-
-// Body parsing middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 // Logging
 if (process.env.NODE_ENV !== 'production') {
@@ -57,9 +59,35 @@ app.use('/api/calls', callsRouter);
 app.use('/api/stats', statsRouter);
 app.use('/api/sync', syncRouter);
 
+// Webhook route (no /api prefix for external webhook calls)
+app.use('/webhook', webhookRouter);
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    name: 'Dialpad Call Logs API',
+    version: '1.0.0',
+    endpoints: {
+      api: {
+        calls: '/api/calls',
+        stats: '/api/stats',
+        sync: '/api/sync',
+        health: '/api/health'
+      },
+      webhook: {
+        main: '/webhook',
+        health: '/webhook/health',
+        stats: '/webhook/stats',
+        logs: '/webhook/logs',
+        test: '/webhook/test (dev only)'
+      }
+    }
+  });
 });
 
 // Error handling middleware
@@ -81,6 +109,7 @@ app.use((req, res) => {
 app.listen(port, () => {
   console.log(`API server running on http://localhost:${port}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`Webhook endpoint: http://localhost:${port}/webhook`);
 });
 
 // Graceful shutdown
