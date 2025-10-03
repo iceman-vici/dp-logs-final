@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import { utcToZonedTime } from 'date-fns-tz';
+import { callsApi } from '../services/api';
 import '../styles/CallsTable.css';
 
 const CallsTable = ({ calls, loading }) => {
   const [expandedCall, setExpandedCall] = useState(null);
+  const [recordingUrls, setRecordingUrls] = useState({});
+  const [loadingRecording, setLoadingRecording] = useState({});
   const nyTz = 'America/New_York';
 
   // Helper to format epoch timestamp to NY timezone
@@ -68,8 +71,85 @@ const CallsTable = ({ calls, loading }) => {
     }
   };
 
-  const toggleExpand = (callId) => {
-    setExpandedCall(expandedCall === callId ? null : callId);
+  const toggleExpand = async (callId) => {
+    if (expandedCall === callId) {
+      setExpandedCall(null);
+    } else {
+      setExpandedCall(callId);
+      
+      // Fetch recording URL if available and not already fetched
+      const call = calls.find(c => c.call_id === callId);
+      if ((call.recording_id || call.voicemail_link) && !recordingUrls[callId]) {
+        await fetchRecordingUrl(callId);
+      }
+    }
+  };
+
+  const fetchRecordingUrl = async (callId) => {
+    try {
+      setLoadingRecording(prev => ({ ...prev, [callId]: true }));
+      const response = await callsApi.getCallRecording(callId);
+      setRecordingUrls(prev => ({ ...prev, [callId]: response }));
+    } catch (error) {
+      console.error('Failed to fetch recording:', error);
+      setRecordingUrls(prev => ({ 
+        ...prev, 
+        [callId]: { error: 'Failed to load recording' } 
+      }));
+    } finally {
+      setLoadingRecording(prev => ({ ...prev, [callId]: false }));
+    }
+  };
+
+  const getRecordingDisplay = (call) => {
+    const recordingData = recordingUrls[call.call_id];
+    
+    if (loadingRecording[call.call_id]) {
+      return <span className="loading-recording">Loading recording...</span>;
+    }
+    
+    if (recordingData?.error) {
+      return <span className="recording-error">❌ {recordingData.error}</span>;
+    }
+    
+    if (recordingData?.url) {
+      return (
+        <a 
+          href={recordingData.url} 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="recording-link"
+        >
+          {recordingData.type === 'voicemail' ? '🔊 Listen to Voicemail' : '🎧 Play Recording'}
+        </a>
+      );
+    }
+    
+    if (call.voicemail_link) {
+      return (
+        <a 
+          href={call.voicemail_link} 
+          target="_blank" 
+          rel="noopener noreferrer" 
+          className="voicemail-link"
+        >
+          🔊 Listen to Voicemail
+        </a>
+      );
+    }
+    
+    if (call.recording_id) {
+      return (
+        <button 
+          onClick={() => fetchRecordingUrl(call.call_id)}
+          className="btn-load-recording"
+        >
+          🎧 Load Recording
+        </button>
+      );
+    }
+    
+    return <span className="no-recording">No recording available</span>;
   };
 
   if (loading && (!calls || calls.length === 0)) {
@@ -137,7 +217,9 @@ const CallsTable = ({ calls, loading }) => {
                     <span className="duration">{formatDuration(call.duration)}</span>
                   </td>
                   <td>
-                    {call.was_recorded ? (
+                    {call.recording_id ? (
+                      <span className="has-recording" title="Has Recording ID">🎙️</span>
+                    ) : call.was_recorded ? (
                       <span className="recorded">✅</span>
                     ) : (
                       <span className="not-recorded">❌</span>
@@ -162,6 +244,12 @@ const CallsTable = ({ calls, loading }) => {
                             <div className="detail-item">
                               <label>Full Call ID</label>
                               <span>{call.call_id}</span>
+                            </div>
+                            <div className="detail-item">
+                              <label>Recording ID</label>
+                              <span className="recording-id">
+                                {call.recording_id || 'N/A'}
+                              </span>
                             </div>
                             <div className="detail-item">
                               <label>Internal Number</label>
@@ -202,19 +290,25 @@ const CallsTable = ({ calls, loading }) => {
                           </div>
                         </div>
                         
+                        {(call.recording_id || call.voicemail_link) && (
+                          <div className="expanded-section">
+                            <h4>Recording</h4>
+                            <div className="recording-section">
+                              {getRecordingDisplay(call)}
+                              {call.recording_id && (
+                                <div className="recording-details">
+                                  <span className="recording-id-label">Recording ID:</span>
+                                  <code>{call.recording_id}</code>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        
                         {call.transcription_text && (
                           <div className="expanded-section">
                             <h4>Transcription</h4>
                             <p className="transcription">{call.transcription_text}</p>
-                          </div>
-                        )}
-                        
-                        {call.voicemail_link && (
-                          <div className="expanded-section">
-                            <h4>Voicemail</h4>
-                            <a href={call.voicemail_link} target="_blank" rel="noopener noreferrer" className="voicemail-link">
-                              🔊 Listen to Voicemail
-                            </a>
                           </div>
                         )}
                         

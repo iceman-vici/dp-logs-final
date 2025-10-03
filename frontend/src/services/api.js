@@ -49,6 +49,26 @@ export const callsApi = {
     return response.data;
   },
 
+  getCallRecording: async (id) => {
+    const response = await api.get(`/calls/${id}/recording`);
+    return response.data;
+  },
+
+  getBatchRecordings: async (callIds) => {
+    const response = await api.post('/calls/recordings/batch', { call_ids: callIds });
+    return response.data;
+  },
+
+  getRecordingStats: async () => {
+    const response = await api.get('/calls/stats/recording');
+    return response.data;
+  },
+
+  searchCalls: async (query, limit = 50) => {
+    const response = await api.get('/calls/search', { params: { q: query, limit } });
+    return response.data;
+  },
+
   getUserStats: async (limit = 10) => {
     const response = await api.get('/stats/users', { params: { limit } });
     return response.data;
