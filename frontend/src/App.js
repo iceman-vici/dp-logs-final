@@ -3,6 +3,7 @@ import CallsTable from './components/CallsTable';
 import UserStatsTable from './components/UserStatsTable';
 import SyncControls from './components/SyncControls';
 import SyncLogs from './components/SyncLogs';
+import ScheduleManager from './components/ScheduleManager';
 import LoadingSpinner from './components/LoadingSpinner';
 import ErrorMessage from './components/ErrorMessage';
 import { callsApi } from './services/api';
@@ -16,7 +17,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
-  const [showSyncLogs, setShowSyncLogs] = useState(false);
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'sync-logs', 'schedules'
 
   const fetchCalls = async () => {
     try {
@@ -140,16 +141,26 @@ function App() {
         
         <div className="view-controls">
           <button 
-            onClick={() => setShowSyncLogs(!showSyncLogs)}
-            className="btn-toggle-view"
+            onClick={() => setActiveView('dashboard')}
+            className={`btn-view ${activeView === 'dashboard' ? 'active' : ''}`}
           >
-            {showSyncLogs ? '📊 Show Dashboard' : '📋 Show Sync Logs'}
+            📊 Dashboard
+          </button>
+          <button 
+            onClick={() => setActiveView('sync-logs')}
+            className={`btn-view ${activeView === 'sync-logs' ? 'active' : ''}`}
+          >
+            📋 Sync Logs
+          </button>
+          <button 
+            onClick={() => setActiveView('schedules')}
+            className={`btn-view ${activeView === 'schedules' ? 'active' : ''}`}
+          >
+            🗓️ Schedules
           </button>
         </div>
         
-        {showSyncLogs ? (
-          <SyncLogs />
-        ) : (
+        {activeView === 'dashboard' && (
           <div className="dashboard-grid">
             <section className="calls-section">
               <h2>Recent Calls</h2>
@@ -162,6 +173,10 @@ function App() {
             </section>
           </div>
         )}
+        
+        {activeView === 'sync-logs' && <SyncLogs />}
+        
+        {activeView === 'schedules' && <ScheduleManager />}
       </main>
 
       <ToastContainer 

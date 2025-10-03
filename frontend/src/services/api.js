@@ -128,6 +128,42 @@ export const callsApi = {
     const response = await api.post('/sync/all');
     return response.data;
   },
+
+  // Schedule management
+  getSchedules: async () => {
+    const response = await api.get('/schedule');
+    return response.data;
+  },
+
+  createSchedule: async (data) => {
+    const response = await api.post('/schedule', data);
+    return response.data;
+  },
+
+  updateSchedule: async (id, data) => {
+    const response = await api.put(`/schedule/${id}`, data);
+    return response.data;
+  },
+
+  deleteSchedule: async (id) => {
+    const response = await api.delete(`/schedule/${id}`);
+    return response.data;
+  },
+
+  triggerSchedule: async (id) => {
+    const response = await api.post(`/schedule/${id}/trigger`);
+    return response.data;
+  },
+
+  validateCron: async (expression) => {
+    const response = await api.post('/schedule/validate-cron', { expression });
+    return response.data;
+  },
+
+  getSchedulePresets: async () => {
+    const response = await api.get('/schedule/presets');
+    return response.data;
+  },
 };
 
 export default api;
