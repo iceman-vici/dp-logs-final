@@ -1,0 +1,50 @@
+{
+  "event_type": "call.ended",
+  "call": {
+    "id": "1234567890123456789",
+    "direction": "inbound",
+    "state": "completed",
+    "date_started": 1696339200000,
+    "date_rang": 1696339205000,
+    "date_connected": 1696339210000,
+    "date_ended": 1696339320000,
+    "duration": 110,
+    "total_duration": 120,
+    "external_number": "+12025551234",
+    "internal_number": "+14155559876",
+    "is_transferred": false,
+    "was_recorded": true,
+    "mos_score": 4.2,
+    "group_id": "group_123",
+    "entry_point_call_id": null,
+    "master_call_id": null,
+    "event_timestamp": 1696339320000,
+    "contact": {
+      "id": "contact_abc123",
+      "name": "John Doe",
+      "email": "john.doe@example.com",
+      "phone": "+12025551234",
+      "type": "external"
+    },
+    "target": {
+      "id": "user_xyz789",
+      "name": "Jane Smith",
+      "email": "jane.smith@yourcompany.com",
+      "phone": "+14155559876",
+      "type": "internal"
+    },
+    "recordings": [
+      {
+        "id": "recording_def456",
+        "url": "https://api.dialpad.com/recordings/recording_def456",
+        "duration": 108,
+        "recording_type": "call",
+        "start_time": 1696339212000
+      }
+    ],
+    "transcription": {
+      "text": "This is a sample transcription of the call conversation."
+    },
+    "voicemail": null
+  }
+}
