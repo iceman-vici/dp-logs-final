@@ -4,7 +4,7 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 600000, // Increased to 10 minutes for very large sync operations
+  timeout: 60000, // Default 1 minute timeout
   headers: {
     'Content-Type': 'application/json',
   },
@@ -59,16 +59,43 @@ export const callsApi = {
     return response.data;
   },
 
-  downloadCalls: async (from, to, limit = 50) => {
-    // Use longer timeout for download operations
-    const response = await api.get('/sync/download', {
-      params: { from, to, limit },
-      timeout: 600000 // 10 minutes timeout for full sync with many pages
+  // Streaming download for full sync
+  downloadCallsStream: async (from, to, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const eventSource = new EventSource(`${API_URL}/sync/download-stream?from=${from}&to=${to}`);
+      let result = null;
+      
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          if (data.type === 'complete') {
+            result = data.result;
+            eventSource.close();
+            if (result.success) {
+              resolve(result);
+            } else {
+              reject(new Error(result.error || 'Sync failed'));
+            }
+          } else if (onProgress) {
+            onProgress(data);
+          }
+        } catch (error) {
+          console.error('Error parsing SSE message:', error);
+        }
+      };
+      
+      eventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        eventSource.close();
+        reject(new Error('Connection lost during sync'));
+      };
+      
+      // No timeout for SSE - it will continue until complete
     });
-    return response.data;
   },
 
-  // New method for quick sync (single page)
+  // Quick sync (single page)
   downloadCallsQuick: async (from, to) => {
     const response = await api.get('/sync/download-quick', {
       params: { from, to },

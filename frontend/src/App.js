@@ -56,16 +56,17 @@ function App() {
     }
   };
 
-  const handleSync = async (fromDate, toDate, syncMode = 'quick') => {
+  const handleSync = async (fromDate, toDate, syncMode = 'quick', onProgress) => {
     try {
       setLoading(true);
       
-      // Use different endpoints based on sync mode
       let result;
       if (syncMode === 'quick') {
+        // Quick sync uses regular HTTP request
         result = await callsApi.downloadCallsQuick(fromDate, toDate);
       } else {
-        result = await callsApi.downloadCalls(fromDate, toDate);
+        // Full sync uses SSE streaming
+        result = await callsApi.downloadCallsStream(fromDate, toDate, onProgress);
       }
       
       toast.success(result.message || 'Sync completed successfully');

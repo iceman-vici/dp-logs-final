@@ -71,7 +71,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     
     const syncMessage = syncMode === 'quick' 
       ? 'Starting Quick Sync (first 50 calls)...' 
-      : 'Starting Full Sync (all calls - this may take several minutes)...';
+      : 'Starting Full Sync (streaming connection - no timeout)...';
     
     setSyncStatus(syncMessage);
     addLog(syncMessage, 'info');
@@ -85,72 +85,61 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       addLog(`Sync mode: ${syncMode.toUpperCase()}`, 'info');
       
       if (syncMode === 'full') {
-        addLog('⚠️ Full sync may take several minutes depending on the number of calls', 'warning');
-        addLog('The sync uses rate limiting (15 requests/second) to respect Dialpad API limits', 'info');
-        addLog('Fetching calls in batches to avoid timeout...', 'info');
+        addLog('✅ Using streaming connection - sync will continue until complete', 'success');
+        addLog('🔄 The connection will stay alive with keep-alive signals', 'info');
+        addLog('Rate limiting: 15 requests/second to respect API limits', 'info');
       }
       
-      addLog('Connecting to Dialpad API...', 'info');
+      addLog('Connecting to backend...', 'info');
       
-      // Add periodic progress messages for full sync
-      let progressMessageInterval = null;
-      if (syncMode === 'full') {
-        let messageCount = 0;
-        progressMessageInterval = setInterval(() => {
-          messageCount++;
-          const messages = [
-            'Still fetching calls from Dialpad...',
-            'Processing pages with rate limiting...',
-            'Continuing to fetch call data...',
-            'Still working, please be patient...'
-          ];
-          addLog(messages[messageCount % messages.length], 'progress');
-        }, 10000); // Every 10 seconds
-      }
-      
-      try {
-        addLog('Sending sync request to backend...', 'progress');
-        const result = await onSync(fromIso, toIso, syncMode);
-        
-        // Clear progress interval
-        if (progressMessageInterval) {
-          clearInterval(progressMessageInterval);
-        }
-        
-        // Log results
-        addLog(`✓ Sync completed successfully!`, 'success');
-        if (result.totalCalls !== undefined) {
-          addLog(`Total calls found: ${result.totalCalls}`, 'success');
-          addLog(`Calls inserted: ${result.inserted}`, 'success');
-          if (result.failed > 0) {
-            addLog(`Calls failed: ${result.failed}`, 'warning');
+      // Progress handler for streaming updates
+      const handleProgress = (data) => {
+        if (data.type === 'error') {
+          addLog(`❌ ${data.message}`, 'error');
+        } else if (data.type === 'warning') {
+          addLog(`⚠️ ${data.message}`, 'warning');
+        } else if (data.type === 'success') {
+          addLog(`✓ ${data.message}`, 'success');
+        } else if (data.type === 'progress') {
+          addLog(data.message, 'progress');
+          if (data.progress) {
+            addLog(`Progress: ${data.progress}%`, 'info');
           }
-          if (result.duration) {
-            addLog(`Completed in: ${result.duration}`, 'info');
-          }
-        }
-        
-        if (result.hasMore && syncMode === 'quick') {
-          addLog('ℹ️ More calls available. Use "Full Sync" to get all.', 'warning');
-          setSyncStatus(result.message + ' - More calls available');
         } else {
-          setSyncStatus(result.message || 'Sync completed');
+          addLog(data.message, 'info');
         }
-        
-        return result;
-      } finally {
-        if (progressMessageInterval) {
-          clearInterval(progressMessageInterval);
+      };
+      
+      const result = await onSync(fromIso, toIso, syncMode, handleProgress);
+      
+      // Log final results
+      addLog(`🎉 Sync completed successfully!`, 'success');
+      if (result.totalCalls !== undefined) {
+        addLog(`Total calls: ${result.totalCalls}`, 'success');
+        addLog(`Successfully inserted: ${result.inserted}`, 'success');
+        if (result.failed > 0) {
+          addLog(`Failed insertions: ${result.failed}`, 'warning');
+        }
+        if (result.duration) {
+          addLog(`Total time: ${result.duration}`, 'info');
         }
       }
+      
+      if (result.hasMore && syncMode === 'quick') {
+        addLog('ℹ️ More calls available. Use "Full Sync" to get all.', 'warning');
+        setSyncStatus(result.message + ' - More calls available');
+      } else {
+        setSyncStatus(result.message || 'Sync completed');
+      }
+      
+      return result;
     } catch (err) {
       const errorMessage = err.message || 'Unknown error';
+      addLog(`❌ Sync failed: ${errorMessage}`, 'error');
       
-      if (errorMessage.includes('timeout')) {
-        addLog('❌ Sync timed out - the date range might be too large', 'error');
-        addLog('💡 Try using a smaller date range or Quick Sync mode', 'warning');
-      } else {
-        addLog(`❌ Sync failed: ${errorMessage}`, 'error');
+      if (errorMessage.includes('Connection lost')) {
+        addLog('🔄 Connection was lost. Please try again.', 'warning');
+        addLog('💡 If this persists, try a smaller date range', 'info');
       }
       
       setSyncStatus(`Sync failed: ${errorMessage}`);
@@ -163,7 +152,6 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
         clearInterval(progressIntervalRef.current);
       }
       
-      const finalTime = Math.floor((Date.now() - Date.now() + elapsedTime * 1000) / 1000);
       addLog(`Sync process ended. Total time: ${elapsedTime} seconds`, 'info');
     }
   };
@@ -244,7 +232,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Quick Sync (First 50 calls - Fast, ~5-10 seconds)</span>
+          <span>Quick Sync (First 50 calls - Fast)</span>
         </label>
         <label className="radio-label">
           <input
@@ -254,8 +242,19 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Full Sync (All calls - Slow, may take 2-10 minutes)</span>
+          <span>Full Sync (All calls - Streaming, No timeout)</span>
         </label>
+      </div>
+
+      <div className="sync-info">
+        <div className="info-item">
+          <span className="info-icon">🚀</span>
+          <span><strong>Quick Sync:</strong> HTTP request, ~5-10 seconds, first 50 calls</span>
+        </div>
+        <div className="info-item">
+          <span className="info-icon">🌊</span>
+          <span><strong>Full Sync:</strong> SSE streaming, continues until complete, all calls</span>
+        </div>
       </div>
 
       <div className="action-controls">
@@ -264,7 +263,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
           disabled={loading || isSyncing}
           className="btn-primary"
         >
-          {isSyncing ? `Syncing... (${formatElapsedTime(elapsedTime)})` : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync')}
+          {isSyncing ? `Syncing... (${formatElapsedTime(elapsedTime)})` : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync (Stream)')}
         </button>
         
         <button 
@@ -325,7 +324,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       <div className="timezone-info">
         <small>All times are in New York timezone (America/New_York)</small>
         <br />
-        <small className="rate-limit-info">API Rate Limit: 15 requests/second (900/minute, under Dialpad's 1200/min limit)</small>
+        <small className="rate-limit-info">Rate Limit: 15 req/sec | Keep-Alive: 30 sec intervals</small>
       </div>
     </div>
   );

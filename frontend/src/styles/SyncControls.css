@@ -87,7 +87,7 @@
 .sync-mode-selector {
   display: flex;
   gap: 2rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
   padding: 1rem;
   background: var(--hover-bg);
   border-radius: 8px;
@@ -118,6 +118,32 @@
 
 .radio-label:hover {
   color: var(--primary-color);
+}
+
+/* Sync Info Section */
+.sync-info {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  color: white;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.info-icon {
+  font-size: 1.2rem;
+}
+
+.sync-info strong {
+  color: white;
 }
 
 .action-controls {
@@ -175,7 +201,7 @@
 }
 
 .sync-logs {
-  height: 250px;
+  height: 300px;
   overflow-y: auto;
   padding: 0.5rem;
   background: white;
@@ -368,6 +394,11 @@
     gap: 1rem;
   }
   
+  .sync-info {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
   .action-controls {
     flex-direction: column;
   }
@@ -377,6 +408,6 @@
   }
   
   .sync-logs {
-    height: 150px;
+    height: 200px;
   }
 }
