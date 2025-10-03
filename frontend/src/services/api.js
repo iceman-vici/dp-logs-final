@@ -59,40 +59,60 @@ export const callsApi = {
     return response.data;
   },
 
-  // Streaming download for full sync
-  downloadCallsStream: async (from, to, onProgress) => {
-    return new Promise((resolve, reject) => {
-      const eventSource = new EventSource(`${API_URL}/sync/download-stream?from=${from}&to=${to}`);
-      let result = null;
-      
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'complete') {
-            result = data.result;
-            eventSource.close();
-            if (result.success) {
-              resolve(result);
-            } else {
-              reject(new Error(result.error || 'Sync failed'));
-            }
-          } else if (onProgress) {
-            onProgress(data);
-          }
-        } catch (error) {
-          console.error('Error parsing SSE message:', error);
+  // Start background sync job
+  startSync: async (from, to, mode = 'full') => {
+    const response = await api.post('/sync/start', { from, to, mode });
+    return response.data;
+  },
+
+  // Get sync job status
+  getSyncStatus: async (jobId) => {
+    const response = await api.get(`/sync/status/${jobId}`);
+    return response.data;
+  },
+
+  // Get sync logs history
+  getSyncLogs: async (limit = 10, offset = 0) => {
+    const response = await api.get('/sync/logs', { params: { limit, offset } });
+    return response.data;
+  },
+
+  // Get sync log details
+  getSyncLogDetails: async (syncId, status = null, limit = 100) => {
+    const params = { limit };
+    if (status) params.status = status;
+    const response = await api.get(`/sync/logs/${syncId}/details`, { params });
+    return response.data;
+  },
+
+  // Retry failed sync
+  retrySyncFailed: async (syncId) => {
+    const response = await api.post(`/sync/retry/${syncId}`);
+    return response.data;
+  },
+
+  // Subscribe to sync progress (SSE)
+  subscribeSyncProgress: (jobId, onProgress) => {
+    const eventSource = new EventSource(`${API_URL}/sync/progress/${jobId}`);
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        onProgress(data);
+        
+        if (data.status === 'completed' || data.status === 'failed') {
+          eventSource.close();
         }
-      };
-      
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error);
-        eventSource.close();
-        reject(new Error('Connection lost during sync'));
-      };
-      
-      // No timeout for SSE - it will continue until complete
-    });
+      } catch (error) {
+        console.error('Error parsing progress:', error);
+      }
+    };
+    
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+    
+    return eventSource;
   },
 
   // Quick sync (single page)
