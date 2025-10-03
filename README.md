@@ -1,6 +1,147 @@
 # Dialpad Logs System
 
-A comprehensive system for managing and analyzing Dialpad call logs with React frontend and Node.js backend.
+A comprehensive call logging and analytics system for Dialpad, featuring automatic synchronization, retry capabilities, and detailed logging.
+
+## Features
+
+- 📞 **Call Data Sync**: Automatic synchronization with Dialpad API
+- 🔄 **Background Processing**: Non-blocking sync operations
+- 🔁 **Retry Mechanism**: Automatic retry for failed call insertions
+- 📊 **Analytics Dashboard**: Real-time call statistics and user metrics
+- 📋 **Detailed Logging**: Complete audit trail of all sync operations
+- 🌐 **Timezone Support**: Proper NY timezone handling
+- 🐳 **Docker Support**: Complete containerized deployment
+
+## Prerequisites
+
+- Docker and Docker Compose
+- Dialpad API Token
+- Node.js 18+ (for local development)
+- PostgreSQL 15+ (if not using Docker)
+
+## Quick Start with Docker
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/iceman-vici/dp-logs-final.git
+cd dp-logs-final
+```
+
+### 2. Setup environment
+
+```bash
+# Copy example environment file
+cp .env.example .env
+
+# Edit .env and add your Dialpad API token
+nano .env  # or use your preferred editor
+```
+
+### 3. Start with Docker
+
+```bash
+# Using Make (recommended)
+make install  # Complete setup, build, and start
+
+# OR using Docker Compose directly
+docker-compose up -d
+```
+
+### 4. Access the application
+
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:3001
+- **pgAdmin**: http://localhost:5050 (admin@dialpad.local / admin)
+
+## Docker Commands
+
+### Using Make (Recommended)
+
+```bash
+make help        # Show all available commands
+make setup       # Initial setup
+make build       # Build containers
+make up          # Start services
+make down        # Stop services
+make logs        # View logs
+make db-shell    # Access PostgreSQL
+make status      # Check service status
+make clean       # Clean up everything
+```
+
+### Using Docker Compose
+
+```bash
+# Start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Reset database
+docker-compose down -v
+docker-compose up -d
+
+# Access database
+docker-compose exec postgres psql -U postgres -d dialpad_logs
+```
+
+## Database Management
+
+### Access PostgreSQL
+
+```bash
+# Using Make
+make db-shell
+
+# Using Docker
+docker-compose exec postgres psql -U postgres -d dialpad_logs
+```
+
+### Backup Database
+
+```bash
+# Create backup
+make backup-db
+
+# Restore backup
+make restore-db FILE=backups/backup_20240101_120000.sql
+```
+
+### Reset Database
+
+```bash
+# WARNING: This deletes all data
+make db-reset
+```
+
+## Development
+
+### Local Development with Docker
+
+```bash
+# Start in development mode with hot reload
+docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+### Manual Setup (Without Docker)
+
+```bash
+# Backend
+cd backend
+cp .env.example .env  # Configure database and API token
+npm install
+npm run dev
+
+# Frontend
+cd frontend
+npm install
+npm start
+```
 
 ## Project Structure
 
@@ -8,198 +149,91 @@ A comprehensive system for managing and analyzing Dialpad call logs with React f
 dp-logs-final/
 ├── backend/
 │   ├── src/
-│   │   ├── config/
-│   │   ├── controllers/
-│   │   ├── services/
-│   │   ├── routes/
-│   │   └── utils/
-│   ├── server.js
-│   ├── package.json
-│   └── .env.example
+│   │   ├── config/      # Database and app configuration
+│   │   ├── routes/      # API endpoints
+│   │   └── utils/       # Helper functions
+│   ├── database/
+│   │   └── schema.sql   # Database schema
+│   └── Dockerfile
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   ├── services/
-│   │   └── styles/
-│   ├── public/
-│   ├── package.json
-│   └── .env.example
+│   │   ├── components/  # React components
+│   │   ├── services/    # API services
+│   │   └── styles/      # CSS files
+│   └── Dockerfile
+├── docker-compose.yml    # Docker configuration
+├── Makefile             # Convenience commands
 └── README.md
 ```
 
-## Features
-
-- **Call Log Management**: Download and store Dialpad call logs
-- **User Statistics**: Analyze call patterns and user performance
-- **Date Range Filtering**: Select specific time periods for data retrieval
-- **Real-time Updates**: Refresh data on demand
-- **PostgreSQL Integration**: Robust data storage and retrieval
-
-## Prerequisites
-
-- Node.js (v14 or higher)
-- PostgreSQL database
-- Dialpad API token
-- npm or yarn
-
-## Quick Start
-
-### 1. Clone the repository
-```bash
-git clone https://github.com/iceman-vici/dp-logs-final.git
-cd dp-logs-final
-```
-
-### 2. Install dependencies
-
-#### Option A: Using npm scripts (Recommended)
-```bash
-# Install all dependencies (root, backend, and frontend)
-npm run install:all
-```
-
-#### Option B: Manual installation
-```bash
-# Install root dependencies
-npm install
-
-# Install backend dependencies
-cd backend
-npm install
-cd ..
-
-# Install frontend dependencies
-cd frontend
-npm install
-cd ..
-```
-
-### 3. Configure environment variables
-
-#### Backend configuration
-```bash
-cd backend
-cp .env.example .env
-# Edit .env with your database and Dialpad API credentials
-```
-
-Backend .env variables:
-```env
-# Database Configuration
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=your_db_user
-DB_PASSWORD=your_db_password
-DB_NAME=dialpad_logs
-
-# Dialpad API Configuration
-DIALPAD_TOKEN=your_dialpad_api_token
-
-# Server Configuration
-PORT=3001
-NODE_ENV=development
-```
-
-#### Frontend configuration
-```bash
-cd ../frontend
-cp .env.example .env
-# Usually no changes needed for development
-```
-
-### 4. Database Setup
-
-Create the database and run the schema:
-
-```bash
-# Create database
-psql -U postgres -c "CREATE DATABASE dialpad_logs;"
-
-# Run schema
-psql -U postgres -d dialpad_logs -f backend/database/schema.sql
-```
-
-### 5. Start the application
-
-#### Development mode (both backend and frontend)
-```bash
-# From root directory
-npm run dev
-```
-
-This will start:
-- Backend server on http://localhost:3001
-- Frontend dev server on http://localhost:3000
-
-#### Start services individually
-```bash
-# Backend only
-cd backend
-npm run dev
-
-# Frontend only
-cd frontend
-npm start
-```
-
-## Using Docker
-
-For a containerized setup:
-
-```bash
-# Start all services
-docker-compose up
-
-# Stop services
-docker-compose down
-```
-
-## Available Scripts
-
-From the root directory:
-
-- `npm run install:all` - Install all dependencies
-- `npm run dev` - Start both backend and frontend in development mode
-- `npm run dev:backend` - Start backend only
-- `npm run dev:frontend` - Start frontend only
-- `npm run build` - Build frontend for production
-- `npm run docker:up` - Start Docker containers
-- `npm run docker:down` - Stop Docker containers
-
 ## API Endpoints
 
-- `GET /api/calls` - Retrieve recent calls
-- `GET /api/stats/users` - Get user call statistics
-- `GET /api/sync/download` - Download and insert calls from Dialpad
-- `GET /api/health` - Health check endpoint
+### Sync Endpoints
+
+- `POST /api/sync/start` - Start background sync job
+- `GET /api/sync/status/:jobId` - Check job status
+- `GET /api/sync/logs` - Get sync history
+- `GET /api/sync/logs/:syncId/details` - Get sync details
+- `POST /api/sync/retry/:syncId` - Retry failed calls
+- `GET /api/sync/download-quick` - Quick sync (50 calls)
+
+### Data Endpoints
+
+- `GET /api/calls` - Get all calls
+- `GET /api/stats/users` - Get user statistics
+- `GET /api/stats/summary` - Get call summary
+
+## Environment Variables
+
+```env
+# Required
+DIALPAD_TOKEN=your_dialpad_api_token
+
+# Database (Docker defaults)
+DB_HOST=postgres
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_NAME=dialpad_logs
+
+# API
+PORT=3001
+CORS_ORIGINS=http://localhost:3000
+```
 
 ## Troubleshooting
 
-### Common Issues
+### Port Already in Use
 
-1. **Port already in use**
-   - Change the PORT in backend/.env
-   - Update REACT_APP_API_URL in frontend/.env accordingly
+```bash
+# Stop services using the ports
+sudo lsof -i :3000  # Find process using port 3000
+sudo lsof -i :3001  # Find process using port 3001
+sudo lsof -i :5432  # Find process using port 5432
 
-2. **Database connection failed**
-   - Verify PostgreSQL is running
-   - Check database credentials in backend/.env
-   - Ensure database exists: `psql -U postgres -lqt | cut -d \| -f 1 | grep dialpad_logs`
+# Or change ports in docker-compose.yml
+```
 
-3. **Dialpad API errors**
-   - Verify your DIALPAD_TOKEN is valid
-   - Check API rate limits
+### Database Connection Issues
 
-4. **Module not found errors**
-   - Run `npm run install:all` from root
-   - Delete node_modules and package-lock.json, then reinstall
+```bash
+# Check if database is running
+make test-db
 
-## Technologies Used
+# View database logs
+make logs-db
 
-- **Frontend**: React, Axios, React DatePicker, date-fns
-- **Backend**: Node.js, Express, PostgreSQL, Axios
-- **Database**: PostgreSQL
-- **DevOps**: Docker, Docker Compose
+# Restart database
+docker-compose restart postgres
+```
+
+### Reset Everything
+
+```bash
+# Complete cleanup and fresh start
+make clean
+make install
+```
 
 ## License
 
@@ -207,4 +241,4 @@ MIT
 
 ## Support
 
-For issues or questions, please open an issue on [GitHub](https://github.com/iceman-vici/dp-logs-final/issues).
+For issues and questions, please open an issue on GitHub.

@@ -1,68 +1,105 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
-    container_name: dialpad-logs-db
+    container_name: dialpad-postgres
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME:-dialpad_logs}
-      POSTGRES_USER: ${DB_USER:-dialpad_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-dialpad_password}
+      POSTGRES_DB: dialpad_logs
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - dialpad-network
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # Backend API
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: dialpad-logs-backend
+    container_name: dialpad-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: ${DB_USER:-dialpad_user}
-      DB_PASSWORD: ${DB_PASSWORD:-dialpad_password}
-      DB_NAME: ${DB_NAME:-dialpad_logs}
-      DIALPAD_TOKEN: ${DIALPAD_TOKEN}
       NODE_ENV: ${NODE_ENV:-development}
       PORT: 3001
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: dialpad_logs
+      DIALPAD_TOKEN: ${DIALPAD_TOKEN}
+      CORS_ORIGINS: http://localhost:3000,http://frontend:3000
     ports:
       - "3001:3001"
-    depends_on:
-      - postgres
-    networks:
-      - dialpad-network
-    restart: unless-stopped
     volumes:
       - ./backend:/app
       - /app/node_modules
+    networks:
+      - dialpad-network
+    command: npm run dev
 
+  # Frontend React App
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: dialpad-logs-frontend
-    environment:
-      REACT_APP_API_URL: http://localhost:3001/api
-    ports:
-      - "3000:3000"
+    container_name: dialpad-frontend
+    restart: unless-stopped
     depends_on:
       - backend
-    networks:
-      - dialpad-network
-    restart: unless-stopped
+    environment:
+      REACT_APP_API_URL: http://localhost:3001/api
+      WDS_SOCKET_PORT: 3000
+    ports:
+      - "3000:3000"
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    networks:
+      - dialpad-network
+    command: npm start
+    stdin_open: true
+    tty: true
 
-volumes:
-  postgres_data:
+  # pgAdmin (optional - for database management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: dialpad-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@dialpad.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - dialpad-network
+    depends_on:
+      - postgres
 
 networks:
   dialpad-network:
     driver: bridge
+
+volumes:
+  postgres_data:
+    name: dialpad_postgres_data
+  pgadmin_data:
+    name: dialpad_pgadmin_data
