@@ -43,7 +43,9 @@ services:
       DB_NAME: dialpad_calls_db
       DIALPAD_TOKEN: ${DIALPAD_TOKEN}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dp_call_logs}
-      CORS_ORIGINS: http://localhost:3000,http://frontend:3000
+      # IMPORTANT: Update CORS_ORIGINS with your server IP
+      # Example: CORS_ORIGINS=http://localhost:3000,http://YOUR_SERVER_IP:3000,http://YOUR_SERVER_IP:3001
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://frontend:3000}
     ports:
       - "3001:3001"
     volumes:
@@ -63,7 +65,9 @@ services:
     depends_on:
       - backend
     environment:
-      REACT_APP_API_URL: http://localhost:3001/api
+      # IMPORTANT: Update this with your server IP for external access
+      # Example: REACT_APP_API_URL=http://YOUR_SERVER_IP:3001/api
+      REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:3001/api}
       WDS_SOCKET_PORT: 3000
     ports:
       - "3000:3000"
