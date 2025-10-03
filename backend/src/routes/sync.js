@@ -21,7 +21,7 @@ async function createSyncLog(fromNY, toNY, syncMode) {
   const syncId = uuidv4();
   const query = `
     INSERT INTO sync_logs (sync_id, date_from, date_to, date_from_ny, date_to_ny, sync_mode, status)
-    VALUES ($1, to_timestamp($2/1000), to_timestamp($3/1000), $4, $5, $6, 'in_progress')
+    VALUES ($1, to_timestamp($2::BIGINT/1000), to_timestamp($3::BIGINT/1000), $4, $5, $6, 'in_progress')
     RETURNING *;
   `;
   
@@ -147,10 +147,10 @@ async function insertCall(call, syncId) {
   `;
   const values = [
     call_id, syncId, contact.id, target?.id || null,
-    parseInt(date_started), parseInt(date_rang) || null, parseInt(date_connected) || null, parseInt(date_ended) || null,
+    date_started, date_rang || null, date_connected || null, date_ended || null,
     direction, parseFloat(duration), parseFloat(total_duration) || null, state, external_number, internal_number,
     is_transferred || false, was_recorded || false, parseFloat(mos_score) || null, group_id || null,
-    entry_point_call_id || null, master_call_id || null, parseInt(event_timestamp),
+    entry_point_call_id || null, master_call_id || null, event_timestamp,
     transcription_text || null, voicemail_link || null, voicemail_recording_id || null
   ];
   await pool.query(query, values);
@@ -169,7 +169,7 @@ async function insertRecording(call_id, details) {
         url = EXCLUDED.url
       RETURNING id;
     `;
-    await pool.query(query, [id, call_id, rec_duration, recording_type, parseInt(start_time), url]);
+    await pool.query(query, [id, call_id, rec_duration, recording_type, start_time, url]);
   }
 }
 
