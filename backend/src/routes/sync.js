@@ -4,6 +4,7 @@ const axios = require('axios');
 const { pool } = require('../config/database');
 const { zonedTimeToUtc } = require('date-fns-tz');
 const { v4: uuidv4 } = require('uuid');
+const { broadcastSyncUpdate, broadcastNewSync } = require('../sockets/syncSocket');
 
 // Background sync jobs storage (in production, use Redis or a job queue)
 const syncJobs = new Map();
@@ -33,7 +34,7 @@ async function createSyncLog(fromNY, toNY, syncMode) {
 }
 
 // Helper: Update sync log
-async function updateSyncLog(syncId, updates) {
+async function updateSyncLog(syncId, updates, io = null) {
   const fields = [];
   const values = [];
   let paramCount = 1;
@@ -54,6 +55,19 @@ async function updateSyncLog(syncId, updates) {
   `;
   
   const result = await pool.query(query, values);
+  
+  // Broadcast update via WebSocket if io is provided
+  if (io && result.rows.length > 0) {
+    // Get the full sync log with view data
+    const viewQuery = `
+      SELECT * FROM sync_summary_view WHERE sync_id = $1;
+    `;
+    const viewResult = await pool.query(viewQuery, [syncId]);
+    if (viewResult.rows.length > 0) {
+      broadcastSyncUpdate(io, viewResult.rows[0]);
+    }
+  }
+  
   return result.rows[0];
 }
 
@@ -197,7 +211,7 @@ class RateLimiter {
 }
 
 // Background sync processor
-async function processSyncJob(jobId) {
+async function processSyncJob(jobId, io) {
   const job = syncJobs.get(jobId);
   if (!job) return;
   
@@ -266,13 +280,13 @@ async function processSyncJob(jobId) {
         job.progress = { pageCount, totalCalls, insertedCount, failedCount };
       }
       
-      // Update sync log after each page
+      // Update sync log after each page with WebSocket broadcast
       await updateSyncLog(syncLog.sync_id, {
         total_calls: totalCalls,
         total_pages: pageCount,
         inserted_count: insertedCount,
         failed_count: failedCount
-      });
+      }, io);
       
       if (!nextCursor || nextCursor === cursor) {
         break;
@@ -289,7 +303,7 @@ async function processSyncJob(jobId) {
       inserted_count: insertedCount,
       failed_count: failedCount,
       duration_seconds: duration
-    });
+    }, io);
     
     job.status = 'completed';
     job.result = { totalCalls, insertedCount, failedCount, duration };
@@ -303,7 +317,7 @@ async function processSyncJob(jobId) {
       total_pages: pageCount,
       inserted_count: insertedCount,
       failed_count: failedCount
-    });
+    }, io);
     
     job.status = 'failed';
     job.error = error.message;
@@ -323,13 +337,15 @@ router.get('/', (req, res) => {
       'GET /api/sync/download-quick': 'Quick sync (50 calls)',
       'GET /api/sync/progress/:jobId': 'SSE progress stream'
     },
-    activeJobs: syncJobs.size
+    activeJobs: syncJobs.size,
+    websocket: 'Available at ws://localhost:3001'
   });
 });
 
 // POST /api/sync/start - Start a background sync job
 router.post('/start', async (req, res) => {
   const { from, to, mode = 'full' } = req.body;
+  const io = req.app.get('io');
   
   if (!from || !to) {
     return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
@@ -338,6 +354,18 @@ router.post('/start', async (req, res) => {
   try {
     // Create sync log
     const syncLog = await createSyncLog(from, to, mode);
+    
+    // Get full sync log from view
+    const viewQuery = `
+      SELECT * FROM sync_summary_view WHERE sync_id = $1;
+    `;
+    const viewResult = await pool.query(viewQuery, [syncLog.sync_id]);
+    const fullSyncLog = viewResult.rows[0];
+    
+    // Broadcast new sync started
+    if (io && fullSyncLog) {
+      broadcastNewSync(io, fullSyncLog);
+    }
     
     // Create job
     const jobId = uuidv4();
@@ -355,8 +383,8 @@ router.post('/start', async (req, res) => {
     
     syncJobs.set(jobId, job);
     
-    // Start processing in background
-    setImmediate(() => processSyncJob(jobId));
+    // Start processing in background with io reference
+    setImmediate(() => processSyncJob(jobId, io));
     
     res.json({
       success: true,
@@ -442,6 +470,7 @@ router.get('/logs/:syncId/details', async (req, res) => {
 // POST /api/sync/retry/:syncId - Retry failed calls from a sync
 router.post('/retry/:syncId', async (req, res) => {
   const { syncId } = req.params;
+  const io = req.app.get('io');
   
   try {
     // Get failed sync details
@@ -481,7 +510,7 @@ router.post('/retry/:syncId', async (req, res) => {
       retriedCount++;
     }
     
-    // Update sync log
+    // Update sync log with WebSocket broadcast
     const updateQuery = `
       UPDATE sync_logs
       SET inserted_count = inserted_count + $1,
@@ -490,6 +519,17 @@ router.post('/retry/:syncId', async (req, res) => {
     `;
     
     await pool.query(updateQuery, [successCount, syncId]);
+    
+    // Broadcast the update
+    if (io) {
+      const viewQuery = `
+        SELECT * FROM sync_summary_view WHERE sync_id = $1;
+      `;
+      const viewResult = await pool.query(viewQuery, [syncId]);
+      if (viewResult.rows.length > 0) {
+        broadcastSyncUpdate(io, viewResult.rows[0]);
+      }
+    }
     
     res.json({
       success: true,
@@ -543,12 +583,26 @@ router.get('/progress/:jobId', (req, res) => {
 // Quick sync endpoint
 router.get('/download-quick', async (req, res) => {
   const { from, to } = req.query;
+  const io = req.app.get('io');
+  
   if (!from || !to) {
     return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
   }
 
   try {
     const syncLog = await createSyncLog(from, to, 'quick');
+    
+    // Broadcast new sync
+    if (io) {
+      const viewQuery = `
+        SELECT * FROM sync_summary_view WHERE sync_id = $1;
+      `;
+      const viewResult = await pool.query(viewQuery, [syncLog.sync_id]);
+      if (viewResult.rows.length > 0) {
+        broadcastNewSync(io, viewResult.rows[0]);
+      }
+    }
+    
     const startedAfter = nyToUtcEpoch(from);
     const startedBefore = nyToUtcEpoch(to);
     const startTime = Date.now();
@@ -593,6 +647,7 @@ router.get('/download-quick', async (req, res) => {
     
     const duration = Math.round((Date.now() - startTime) / 1000);
     
+    // Final update with WebSocket broadcast
     await updateSyncLog(syncLog.sync_id, {
       status: failedCount > 0 ? 'partial' : 'completed',
       total_calls: items?.length || 0,
@@ -600,7 +655,7 @@ router.get('/download-quick', async (req, res) => {
       inserted_count: insertedCount,
       failed_count: failedCount,
       duration_seconds: duration
-    });
+    }, io);
 
     res.json({
       success: true,

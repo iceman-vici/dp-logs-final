@@ -3,7 +3,10 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
 const { pool } = require('./config/database');
+const { setupSocketHandlers } = require('./sockets/syncSocket');
 
 // Import routes
 const callsRouter = require('./routes/calls');
@@ -11,7 +14,24 @@ const statsRouter = require('./routes/stats');
 const syncRouter = require('./routes/sync');
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
+
+// Socket.IO setup
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000'],
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  transports: ['websocket', 'polling']
+});
+
+// Make io accessible to routes
+app.set('io', io);
+
+// Setup Socket.IO handlers
+setupSocketHandlers(io);
 
 // Middleware
 app.use(helmet());
@@ -25,7 +45,11 @@ app.use(morgan('dev'));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    websocket: io.engine.clientsCount || 0
+  });
 });
 
 // API Routes
@@ -67,8 +91,9 @@ app.use((req, res) => {
 });
 
 // Start server
-const server = app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`API server running on http://localhost:${PORT}`);
+  console.log(`WebSocket server ready on ws://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   
   // Test database connection on startup
@@ -84,7 +109,10 @@ const server = app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
+  io.close(() => {
+    console.log('WebSocket server closed');
+  });
+  httpServer.close(() => {
     console.log('HTTP server closed');
     pool.end(() => {
       console.log('Database pool closed');
@@ -95,7 +123,10 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   console.log('\nSIGINT signal received: closing HTTP server');
-  server.close(() => {
+  io.close(() => {
+    console.log('WebSocket server closed');
+  });
+  httpServer.close(() => {
     console.log('HTTP server closed');
     pool.end(() => {
       console.log('Database pool closed');
@@ -104,4 +135,4 @@ process.on('SIGINT', () => {
   });
 });
 
-module.exports = app;
+module.exports = { app, io };
