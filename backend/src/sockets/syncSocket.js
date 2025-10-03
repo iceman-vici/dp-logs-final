@@ -2,6 +2,8 @@ const { pool } = require('../config/database');
 
 // Store active sync watchers
 const syncWatchers = new Map();
+// Store active detail watchers
+const detailWatchers = new Map();
 
 function setupSocketHandlers(io) {
   io.on('connection', (socket) => {
@@ -14,6 +16,9 @@ function setupSocketHandlers(io) {
       
       // Send initial sync logs
       sendInitialSyncLogs(socket);
+      
+      // Start watching all active syncs
+      startWatchingActiveSyncs(io);
     });
     
     // Leave sync logs room
@@ -31,6 +36,11 @@ function setupSocketHandlers(io) {
       if (!syncWatchers.has(syncId)) {
         startWatchingSync(io, syncId);
       }
+      
+      // Also start watching details for real-time updates
+      if (!detailWatchers.has(syncId)) {
+        startWatchingDetails(io, syncId);
+      }
     });
     
     // Stop watching specific sync job
@@ -42,6 +52,7 @@ function setupSocketHandlers(io) {
       const room = io.sockets.adapter.rooms.get(`sync-${syncId}`);
       if (!room || room.size === 0) {
         stopWatchingSync(syncId);
+        stopWatchingDetails(syncId);
       }
     });
     
@@ -105,6 +116,26 @@ async function getSyncDetails(syncId, status = null, limit = 100) {
   return result.rows;
 }
 
+// Start watching all active syncs
+async function startWatchingActiveSyncs(io) {
+  try {
+    const query = `
+      SELECT sync_id FROM sync_logs
+      WHERE status = 'in_progress'
+    `;
+    
+    const result = await pool.query(query);
+    
+    for (const row of result.rows) {
+      if (!syncWatchers.has(row.sync_id)) {
+        startWatchingSync(io, row.sync_id);
+      }
+    }
+  } catch (error) {
+    console.error('Error starting active sync watchers:', error);
+  }
+}
+
 // Start watching a specific sync
 function startWatchingSync(io, syncId) {
   const interval = setInterval(async () => {
@@ -128,23 +159,68 @@ function startWatchingSync(io, syncId) {
         io.to('sync-logs').emit('sync-log-updated', syncLog);
         
         // If sync is completed or failed, stop watching
-        if (syncLog.status === 'completed' || syncLog.status === 'failed') {
-          stopWatchingSync(syncId);
-          
+        if (syncLog.status === 'completed' || syncLog.status === 'failed' || syncLog.status === 'partial') {
           // Get final details
           const details = await getSyncDetails(syncId, null, 500);
           io.to(`sync-${syncId}`).emit('sync-completed', {
             syncLog,
             details
           });
+          
+          // Stop watching after a delay to ensure final updates are sent
+          setTimeout(() => {
+            stopWatchingSync(syncId);
+            stopWatchingDetails(syncId);
+          }, 5000);
         }
       }
     } catch (error) {
       console.error(`Error watching sync ${syncId}:`, error);
     }
-  }, 2000); // Poll every 2 seconds
+  }, 1000); // Poll every 1 second for faster updates
   
   syncWatchers.set(syncId, interval);
+}
+
+// Start watching details for a specific sync
+function startWatchingDetails(io, syncId) {
+  const interval = setInterval(async () => {
+    try {
+      // Get latest failed and success counts
+      const statusQuery = `
+        SELECT 
+          status,
+          COUNT(*) as count
+        FROM sync_log_details
+        WHERE sync_id = $1
+        GROUP BY status
+      `;
+      
+      const statusResult = await pool.query(statusQuery, [syncId]);
+      
+      // Get recent details
+      const recentQuery = `
+        SELECT * FROM sync_log_details
+        WHERE sync_id = $1
+        ORDER BY processed_at DESC
+        LIMIT 50
+      `;
+      
+      const recentResult = await pool.query(recentQuery, [syncId]);
+      
+      // Emit details update
+      io.to(`sync-${syncId}`).emit('sync-details-update', {
+        syncId,
+        statusCounts: statusResult.rows,
+        recentDetails: recentResult.rows
+      });
+      
+    } catch (error) {
+      console.error(`Error watching details for sync ${syncId}:`, error);
+    }
+  }, 2000); // Poll every 2 seconds for details
+  
+  detailWatchers.set(syncId, interval);
 }
 
 // Stop watching a sync
@@ -157,18 +233,47 @@ function stopWatchingSync(syncId) {
   }
 }
 
+// Stop watching details
+function stopWatchingDetails(syncId) {
+  const interval = detailWatchers.get(syncId);
+  if (interval) {
+    clearInterval(interval);
+    detailWatchers.delete(syncId);
+    console.log(`Stopped watching details for sync ${syncId}`);
+  }
+}
+
 // Broadcast sync log update to all clients
 function broadcastSyncUpdate(io, syncLog) {
   io.to('sync-logs').emit('sync-log-updated', syncLog);
+  
+  // If it's a new in_progress sync, start watching it
+  if (syncLog.status === 'in_progress' && !syncWatchers.has(syncLog.sync_id)) {
+    startWatchingSync(io, syncLog.sync_id);
+  }
 }
 
 // Broadcast new sync started
 function broadcastNewSync(io, syncLog) {
   io.to('sync-logs').emit('new-sync-started', syncLog);
+  
+  // Start watching the new sync
+  if (!syncWatchers.has(syncLog.sync_id)) {
+    startWatchingSync(io, syncLog.sync_id);
+  }
+}
+
+// Broadcast real-time progress
+function broadcastProgress(io, syncId, progress) {
+  io.to(`sync-${syncId}`).emit('sync-progress', {
+    syncId,
+    progress
+  });
 }
 
 module.exports = {
   setupSocketHandlers,
   broadcastSyncUpdate,
-  broadcastNewSync
+  broadcastNewSync,
+  broadcastProgress
 };
