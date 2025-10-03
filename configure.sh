@@ -98,6 +98,9 @@ CORS_ORIGINS=${PROTOCOL}://localhost:3000,${PROTOCOL}://${SERVER_IP}:3000,${PROT
 # Frontend API URL
 REACT_APP_API_URL=${PROTOCOL}://${SERVER_IP}:3001/api
 
+# Frontend WebSocket URL
+REACT_APP_WS_URL=${PROTOCOL}://${SERVER_IP}:3001
+
 # Rate Limiting
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
@@ -112,6 +115,7 @@ echo -e "  Protocol: ${YELLOW}${PROTOCOL}${NC}"
 echo -e "  Environment: ${YELLOW}${NODE_ENV}${NC}"
 echo -e "  Frontend URL: ${YELLOW}${PROTOCOL}://${SERVER_IP}:3000${NC}"
 echo -e "  Backend API URL: ${YELLOW}${PROTOCOL}://${SERVER_IP}:3001${NC}"
+echo -e "  WebSocket URL: ${YELLOW}${PROTOCOL}://${SERVER_IP}:3001${NC}"
 echo -e "  Webhook URL: ${YELLOW}${PROTOCOL}://${SERVER_IP}:3001/webhook${NC}"
 
 # Next steps
