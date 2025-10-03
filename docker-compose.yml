@@ -7,18 +7,18 @@ services:
     container_name: dialpad-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: dialpad_logs
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dialpad_calls_db
+      POSTGRES_USER: dp_calls
+      POSTGRES_PASSWORD: dp_logs
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/database:/docker-entrypoint-initdb.d
     networks:
       - dialpad-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U dp_calls"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,10 +38,11 @@ services:
       PORT: 3001
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: dialpad_logs
+      DB_USER: dp_calls
+      DB_PASSWORD: dp_logs
+      DB_NAME: dialpad_calls_db
       DIALPAD_TOKEN: ${DIALPAD_TOKEN}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dp_call_logs}
       CORS_ORIGINS: http://localhost:3000,http://frontend:3000
     ports:
       - "3001:3001"
