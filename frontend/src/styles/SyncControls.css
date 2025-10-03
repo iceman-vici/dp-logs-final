@@ -166,14 +166,22 @@
   justify-content: space-between;
 }
 
+.elapsed-time {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: normal;
+}
+
 .sync-logs {
-  height: 200px;
+  height: 250px;
   overflow-y: auto;
   padding: 0.5rem;
   background: white;
   font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-size: 0.85rem;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .log-entry {
@@ -237,6 +245,7 @@
   border-radius: 50%;
   animation: spin 1s linear infinite;
   display: inline-block;
+  margin-left: 0.5rem;
 }
 
 /* Scrollbar styling */
@@ -272,6 +281,12 @@
   background: #f1f5f9;
   padding: 0.25rem 0.75rem;
   border-radius: 4px;
+  margin: 0.25rem;
+}
+
+.rate-limit-info {
+  color: #6366f1;
+  font-weight: 500;
 }
 
 @keyframes slideIn {

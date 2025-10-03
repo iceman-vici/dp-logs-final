@@ -8,6 +8,7 @@ import '../styles/SyncControls.css';
 const SyncControls = ({ onSync, onRefresh, loading }) => {
   const nyTz = 'America/New_York';
   const logContainerRef = useRef(null);
+  const progressIntervalRef = useRef(null);
   
   // Initialize dates in NY timezone
   const getNYTime = (date = new Date()) => {
@@ -27,6 +28,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
   const [syncMode, setSyncMode] = useState('quick'); // 'quick' or 'full'
   const [syncLogs, setSyncLogs] = useState([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [elapsedTime, setElapsedTime] = useState(0);
 
   // Auto-scroll logs to bottom when new logs are added
   useEffect(() => {
@@ -35,6 +37,15 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     }
   }, [syncLogs]);
 
+  // Cleanup interval on unmount
+  useEffect(() => {
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+    };
+  }, []);
+
   const addLog = (message, type = 'info') => {
     const timestamp = new Date().toLocaleTimeString();
     setSyncLogs(prev => [...prev, { timestamp, message, type }]);
@@ -42,6 +53,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
 
   const clearLogs = () => {
     setSyncLogs([]);
+    setElapsedTime(0);
   };
 
   const handleSync = async () => {
@@ -49,9 +61,17 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
     setShowLogs(true);
     clearLogs();
     
+    const startTime = Date.now();
+    setElapsedTime(0);
+    
+    // Start elapsed time counter
+    progressIntervalRef.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    
     const syncMessage = syncMode === 'quick' 
       ? 'Starting Quick Sync (first 50 calls)...' 
-      : 'Starting Full Sync (all calls)...';
+      : 'Starting Full Sync (all calls - this may take several minutes)...';
     
     setSyncStatus(syncMessage);
     addLog(syncMessage, 'info');
@@ -63,52 +83,88 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       
       addLog(`Date range: ${fromIso} to ${toIso} (NY Time)`, 'info');
       addLog(`Sync mode: ${syncMode.toUpperCase()}`, 'info');
+      
+      if (syncMode === 'full') {
+        addLog('⚠️ Full sync may take several minutes depending on the number of calls', 'warning');
+        addLog('The sync uses rate limiting (15 requests/second) to respect Dialpad API limits', 'info');
+        addLog('Fetching calls in batches to avoid timeout...', 'info');
+      }
+      
       addLog('Connecting to Dialpad API...', 'info');
       
-      // Create a wrapper function that handles progress updates
-      const syncWithProgress = async (from, to, mode) => {
-        // Simulate progress updates (in real implementation, these would come from the backend)
-        const progressInterval = setInterval(() => {
-          if (mode === 'full') {
-            addLog('Fetching next page of calls...', 'progress');
-          }
-        }, 3000);
-        
-        try {
-          const result = await onSync(from, to, mode);
-          clearInterval(progressInterval);
-          return result;
-        } catch (error) {
-          clearInterval(progressInterval);
-          throw error;
-        }
-      };
-      
-      addLog('Fetching calls from Dialpad...', 'progress');
-      const result = await syncWithProgress(fromIso, toIso, syncMode);
-      
-      // Log results
-      addLog(`✓ Sync completed successfully!`, 'success');
-      if (result.totalCalls) {
-        addLog(`Total calls found: ${result.totalCalls}`, 'success');
-        addLog(`Calls inserted: ${result.inserted}`, 'success');
-        if (result.failed > 0) {
-          addLog(`Calls failed: ${result.failed}`, 'warning');
-        }
+      // Add periodic progress messages for full sync
+      let progressMessageInterval = null;
+      if (syncMode === 'full') {
+        let messageCount = 0;
+        progressMessageInterval = setInterval(() => {
+          messageCount++;
+          const messages = [
+            'Still fetching calls from Dialpad...',
+            'Processing pages with rate limiting...',
+            'Continuing to fetch call data...',
+            'Still working, please be patient...'
+          ];
+          addLog(messages[messageCount % messages.length], 'progress');
+        }, 10000); // Every 10 seconds
       }
       
-      if (result.hasMore && syncMode === 'quick') {
-        addLog('ℹ More calls available. Use "Full Sync" to get all.', 'warning');
-        setSyncStatus(result.message + ' - More calls available');
-      } else {
-        setSyncStatus(result.message || 'Sync completed');
+      try {
+        addLog('Sending sync request to backend...', 'progress');
+        const result = await onSync(fromIso, toIso, syncMode);
+        
+        // Clear progress interval
+        if (progressMessageInterval) {
+          clearInterval(progressMessageInterval);
+        }
+        
+        // Log results
+        addLog(`✓ Sync completed successfully!`, 'success');
+        if (result.totalCalls !== undefined) {
+          addLog(`Total calls found: ${result.totalCalls}`, 'success');
+          addLog(`Calls inserted: ${result.inserted}`, 'success');
+          if (result.failed > 0) {
+            addLog(`Calls failed: ${result.failed}`, 'warning');
+          }
+          if (result.duration) {
+            addLog(`Completed in: ${result.duration}`, 'info');
+          }
+        }
+        
+        if (result.hasMore && syncMode === 'quick') {
+          addLog('ℹ️ More calls available. Use "Full Sync" to get all.', 'warning');
+          setSyncStatus(result.message + ' - More calls available');
+        } else {
+          setSyncStatus(result.message || 'Sync completed');
+        }
+        
+        return result;
+      } finally {
+        if (progressMessageInterval) {
+          clearInterval(progressMessageInterval);
+        }
       }
     } catch (err) {
-      addLog(`✗ Sync failed: ${err.message}`, 'error');
-      setSyncStatus(`Sync failed: ${err.message}`);
+      const errorMessage = err.message || 'Unknown error';
+      
+      if (errorMessage.includes('timeout')) {
+        addLog('❌ Sync timed out - the date range might be too large', 'error');
+        addLog('💡 Try using a smaller date range or Quick Sync mode', 'warning');
+      } else {
+        addLog(`❌ Sync failed: ${errorMessage}`, 'error');
+      }
+      
+      setSyncStatus(`Sync failed: ${errorMessage}`);
+      throw err;
     } finally {
       setIsSyncing(false);
-      addLog('Sync process ended.', 'info');
+      
+      // Clear elapsed time interval
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+      
+      const finalTime = Math.floor((Date.now() - Date.now() + elapsedTime * 1000) / 1000);
+      addLog(`Sync process ended. Total time: ${elapsedTime} seconds`, 'info');
     }
   };
 
@@ -129,6 +185,12 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       case 'progress': return 'log-progress';
       default: return 'log-info';
     }
+  };
+
+  const formatElapsedTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
   return (
@@ -182,7 +244,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Quick Sync (First 50 calls - Fast)</span>
+          <span>Quick Sync (First 50 calls - Fast, ~5-10 seconds)</span>
         </label>
         <label className="radio-label">
           <input
@@ -192,7 +254,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
             onChange={(e) => setSyncMode(e.target.value)}
             disabled={isSyncing}
           />
-          <span>Full Sync (All calls - May take time)</span>
+          <span>Full Sync (All calls - Slow, may take 2-10 minutes)</span>
         </label>
       </div>
 
@@ -202,7 +264,7 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
           disabled={loading || isSyncing}
           className="btn-primary"
         >
-          {isSyncing ? 'Syncing...' : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync')}
+          {isSyncing ? `Syncing... (${formatElapsedTime(elapsedTime)})` : (syncMode === 'quick' ? 'Quick Sync' : 'Full Sync')}
         </button>
         
         <button 
@@ -242,7 +304,12 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
         <div className="sync-logs-container">
           <div className="sync-logs-header">
             <span>Sync Progress Logs</span>
-            {isSyncing && <span className="spinner-small"></span>}
+            {isSyncing && (
+              <span className="elapsed-time">
+                Elapsed: {formatElapsedTime(elapsedTime)}
+                <span className="spinner-small"></span>
+              </span>
+            )}
           </div>
           <div className="sync-logs" ref={logContainerRef}>
             {syncLogs.map((log, index) => (
@@ -257,6 +324,8 @@ const SyncControls = ({ onSync, onRefresh, loading }) => {
       
       <div className="timezone-info">
         <small>All times are in New York timezone (America/New_York)</small>
+        <br />
+        <small className="rate-limit-info">API Rate Limit: 15 requests/second (900/minute, under Dialpad's 1200/min limit)</small>
       </div>
     </div>
   );
