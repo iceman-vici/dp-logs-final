@@ -3,7 +3,10 @@ const router = express.Router();
 const axios = require('axios');
 const { pool } = require('../config/database');
 const { zonedTimeToUtc } = require('date-fns-tz');
-const { formatDurationMs } = require('../utils/formatters');
+const { v4: uuidv4 } = require('uuid');
+
+// Background sync jobs storage (in production, use Redis or a job queue)
+const syncJobs = new Map();
 
 // Helper: NY ISO to UTC ms epoch
 function nyToUtcEpoch(nyIsoString) {
@@ -11,6 +14,63 @@ function nyToUtcEpoch(nyIsoString) {
   const nyDate = new Date(nyIsoString);
   const utcDate = zonedTimeToUtc(nyDate, nyTz);
   return utcDate.getTime();
+}
+
+// Helper: Create sync log entry
+async function createSyncLog(fromNY, toNY, syncMode) {
+  const syncId = uuidv4();
+  const query = `
+    INSERT INTO sync_logs (sync_id, date_from, date_to, date_from_ny, date_to_ny, sync_mode, status)
+    VALUES ($1, to_timestamp($2/1000), to_timestamp($3/1000), $4, $5, $6, 'in_progress')
+    RETURNING *;
+  `;
+  
+  const fromUtc = nyToUtcEpoch(fromNY);
+  const toUtc = nyToUtcEpoch(toNY);
+  
+  const result = await pool.query(query, [syncId, fromUtc, toUtc, fromNY, toNY, syncMode]);
+  return result.rows[0];
+}
+
+// Helper: Update sync log
+async function updateSyncLog(syncId, updates) {
+  const fields = [];
+  const values = [];
+  let paramCount = 1;
+  
+  Object.entries(updates).forEach(([key, value]) => {
+    fields.push(`${key} = $${paramCount}`);
+    values.push(value);
+    paramCount++;
+  });
+  
+  values.push(syncId);
+  
+  const query = `
+    UPDATE sync_logs 
+    SET ${fields.join(', ')}, completed_at = CURRENT_TIMESTAMP
+    WHERE sync_id = $${paramCount}
+    RETURNING *;
+  `;
+  
+  const result = await pool.query(query, values);
+  return result.rows[0];
+}
+
+// Helper: Log sync detail
+async function logSyncDetail(syncId, callId, pageNumber, status, errorMessage = null, rawData = null) {
+  const query = `
+    INSERT INTO sync_log_details (sync_id, call_id, page_number, status, error_message, raw_data)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (sync_id, call_id) DO UPDATE SET
+      status = EXCLUDED.status,
+      error_message = EXCLUDED.error_message,
+      retry_count = sync_log_details.retry_count + 1,
+      processed_at = CURRENT_TIMESTAMP
+    RETURNING *;
+  `;
+  
+  await pool.query(query, [syncId, callId, pageNumber, status, errorMessage, rawData]);
 }
 
 // Helper: Upsert contact or user
@@ -27,8 +87,8 @@ async function upsertContactOrUser(table, item) {
   await pool.query(query, [id, email || null, name || null, phone || null, type || null]);
 }
 
-// Helper: Insert call
-async function insertCall(call) {
+// Helper: Insert call with sync reference
+async function insertCall(call, syncId) {
   const {
     call_id, contact, target, date_started, date_rang, date_connected, date_ended,
     direction, duration, total_duration, state, external_number, internal_number,
@@ -44,14 +104,15 @@ async function insertCall(call) {
 
   const query = `
     INSERT INTO calls (
-      call_id, contact_id, target_id, date_started, date_rang, date_connected, date_ended,
+      call_id, sync_id, contact_id, target_id, date_started, date_rang, date_connected, date_ended,
       direction, duration, total_duration, state, external_number, internal_number,
       is_transferred, was_recorded, mos_score, group_id, entry_point_call_id,
       master_call_id, event_timestamp, transcription_text, voicemail_link,
       voicemail_recording_id
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
     ON CONFLICT (call_id) DO UPDATE SET
+      sync_id = EXCLUDED.sync_id,
       contact_id = EXCLUDED.contact_id, target_id = EXCLUDED.target_id,
       date_started = EXCLUDED.date_started, date_rang = EXCLUDED.date_rang,
       date_connected = EXCLUDED.date_connected, date_ended = EXCLUDED.date_ended,
@@ -67,7 +128,7 @@ async function insertCall(call) {
     RETURNING call_id;
   `;
   const values = [
-    call_id, contact.id, target?.id || null,
+    call_id, syncId, contact.id, target?.id || null,
     parseInt(date_started), parseInt(date_rang) || null, parseInt(date_connected) || null, parseInt(date_ended) || null,
     direction, parseFloat(duration), parseFloat(total_duration) || null, state, external_number, internal_number,
     is_transferred || false, was_recorded || false, parseFloat(mos_score) || null, group_id || null,
@@ -96,7 +157,7 @@ async function insertRecording(call_id, details) {
 
 // Helper: Rate limiter
 class RateLimiter {
-  constructor(maxRequests = 20, windowMs = 1000) {
+  constructor(maxRequests = 15, windowMs = 1000) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
     this.requests = [];
@@ -117,218 +178,343 @@ class RateLimiter {
   }
 }
 
-// SSE endpoint for full sync with streaming updates
-router.get('/download-stream', async (req, res) => {
-  const { from, to } = req.query;
-  if (!from || !to) {
-    return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
-  }
-
-  // Set up SSE headers
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-    'X-Accel-Buffering': 'no' // Disable Nginx buffering
-  });
-
-  // Send initial connection message
-  const sendMessage = (data) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
-  };
-
-  // Keep connection alive
-  const keepAliveInterval = setInterval(() => {
-    res.write(':keep-alive\n\n');
-  }, 30000); // Send keep-alive every 30 seconds
-
-  const startedAfter = nyToUtcEpoch(from);
-  const startedBefore = nyToUtcEpoch(to);
-  const startTime = Date.now();
+// Background sync processor
+async function processSyncJob(jobId) {
+  const job = syncJobs.get(jobId);
+  if (!job) return;
   
-  sendMessage({ type: 'info', message: `Starting sync for range: ${from} to ${to} (NY Time)` });
-  sendMessage({ type: 'info', message: 'Using streaming connection to prevent timeouts...' });
-
+  const { syncLog, fromUtc, toUtc } = job;
   const rateLimiter = new RateLimiter(15, 1000);
-  const allCalls = [];
   let cursor = null;
   let pageCount = 0;
-  let totalInserted = 0;
-  let totalFailed = 0;
-  const errors = [];
-
+  let totalCalls = 0;
+  let insertedCount = 0;
+  let failedCount = 0;
+  const startTime = Date.now();
+  
+  job.status = 'running';
+  job.progress = { pageCount, totalCalls, insertedCount, failedCount };
+  
   try {
-    // Fetch phase
-    sendMessage({ type: 'progress', message: 'Starting to fetch calls from Dialpad API...' });
-    
     while (true) {
       await rateLimiter.waitIfNeeded();
       
       const params = new URLSearchParams({
         limit: '50',
-        started_after: startedAfter.toString(),
-        started_before: startedBefore.toString(),
+        started_after: fromUtc.toString(),
+        started_before: toUtc.toString(),
       });
       
       if (cursor) {
         params.append('cursor', cursor);
       }
       
-      sendMessage({ type: 'progress', message: `Fetching page ${pageCount + 1}...` });
+      pageCount++;
+      job.progress.currentPage = pageCount;
+      job.progress.message = `Fetching page ${pageCount}...`;
       
-      try {
-        const response = await axios.get('https://dialpad.com/api/v2/call', {
-          headers: {
-            'Authorization': `Bearer ${process.env.DIALPAD_TOKEN}`,
-            'Accept': 'application/json',
-          },
-          params,
-          timeout: 30000,
-        });
-        
-        if (response.data.error) {
-          throw new Error(`Dialpad API error: ${JSON.stringify(response.data.error)}`);
-        }
-        
-        const { items, cursor: nextCursor } = response.data;
-        
-        if (!items || !Array.isArray(items) || items.length === 0) {
-          sendMessage({ type: 'info', message: 'No more calls to fetch.' });
-          break;
-        }
-        
-        allCalls.push(...items);
-        sendMessage({ 
-          type: 'success', 
-          message: `Fetched ${items.length} calls from page ${pageCount + 1}. Total so far: ${allCalls.length}` 
-        });
-        
-        pageCount++;
-        
-        if (nextCursor && nextCursor !== cursor) {
-          cursor = nextCursor;
-        } else {
-          break;
-        }
-      } catch (error) {
-        if (error.code === 'ECONNABORTED' || error.response?.status === 429) {
-          sendMessage({ type: 'warning', message: 'Rate limit hit, waiting 5 seconds...' });
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          continue;
-        }
-        throw error;
+      const response = await axios.get('https://dialpad.com/api/v2/call', {
+        headers: {
+          'Authorization': `Bearer ${process.env.DIALPAD_TOKEN}`,
+          'Accept': 'application/json',
+        },
+        params,
+        timeout: 30000,
+      });
+      
+      const { items, cursor: nextCursor } = response.data;
+      
+      if (!items || items.length === 0) {
+        break;
       }
+      
+      // Process each call immediately (per page)
+      for (const call of items) {
+        totalCalls++;
+        try {
+          await insertCall(call, syncLog.sync_id);
+          if (call.recording_details) {
+            await insertRecording(call.call_id, call.recording_details);
+          }
+          await logSyncDetail(syncLog.sync_id, call.call_id, pageCount, 'success', null, JSON.stringify(call));
+          insertedCount++;
+        } catch (error) {
+          console.error(`Failed to insert call ${call.call_id}:`, error.message);
+          await logSyncDetail(syncLog.sync_id, call.call_id, pageCount, 'failed', error.message, JSON.stringify(call));
+          failedCount++;
+        }
+        
+        // Update progress
+        job.progress = { pageCount, totalCalls, insertedCount, failedCount };
+      }
+      
+      // Update sync log after each page
+      await updateSyncLog(syncLog.sync_id, {
+        total_calls: totalCalls,
+        total_pages: pageCount,
+        inserted_count: insertedCount,
+        failed_count: failedCount
+      });
+      
+      if (!nextCursor || nextCursor === cursor) {
+        break;
+      }
+      cursor = nextCursor;
     }
     
-    // Insert phase
-    if (allCalls.length === 0) {
-      sendMessage({ type: 'success', message: 'No calls found in the specified date range.' });
-      sendMessage({ type: 'complete', result: { success: true, inserted: 0, failed: 0, totalCalls: 0 } });
-    } else {
-      sendMessage({ type: 'info', message: `Starting to insert ${allCalls.length} calls into database...` });
-      
-      // Process in batches
-      const batchSize = 25;
-      for (let i = 0; i < allCalls.length; i += batchSize) {
-        const batch = allCalls.slice(i, Math.min(i + batchSize, allCalls.length));
-        const batchEnd = Math.min(i + batchSize, allCalls.length);
-        
-        sendMessage({ 
-          type: 'progress', 
-          message: `Processing batch: calls ${i + 1} to ${batchEnd} of ${allCalls.length}` 
-        });
-        
-        for (const call of batch) {
-          try {
-            await insertCall(call);
-            if (call.recording_details) {
-              await insertRecording(call.call_id, call.recording_details);
-            }
-            totalInserted++;
-          } catch (error) {
-            console.error(`Failed to insert call ${call.call_id}:`, error.message);
-            totalFailed++;
-            errors.push({ call_id: call.call_id, error: error.message });
-          }
-        }
-        
-        // Send progress update
-        sendMessage({ 
-          type: 'progress', 
-          message: `Progress: ${totalInserted} inserted, ${totalFailed} failed out of ${allCalls.length} total`,
-          progress: Math.round((i + batchSize) / allCalls.length * 100)
-        });
-      }
-      
-      const duration = Math.round((Date.now() - startTime) / 1000);
-      
-      sendMessage({ 
-        type: 'success', 
-        message: `Sync completed in ${duration} seconds: ${totalInserted} inserted, ${totalFailed} failed` 
-      });
-      
-      sendMessage({ 
-        type: 'complete', 
-        result: {
-          success: true,
-          totalCalls: allCalls.length,
-          inserted: totalInserted,
-          failed: totalFailed,
-          duration: `${duration} seconds`,
-          errors: errors.length <= 10 ? errors : undefined,
-          errorSummary: errors.length > 10 ? `${errors.length} calls failed to insert.` : undefined
-        }
-      });
-    }
+    // Final update
+    const duration = Math.round((Date.now() - startTime) / 1000);
+    await updateSyncLog(syncLog.sync_id, {
+      status: failedCount > 0 ? 'partial' : 'completed',
+      total_calls: totalCalls,
+      total_pages: pageCount,
+      inserted_count: insertedCount,
+      failed_count: failedCount,
+      duration_seconds: duration
+    });
+    
+    job.status = 'completed';
+    job.result = { totalCalls, insertedCount, failedCount, duration };
+    
   } catch (error) {
-    console.error('Stream sync error:', error);
-    sendMessage({ 
-      type: 'error', 
-      message: `Sync failed: ${error.message}` 
+    console.error('Sync job error:', error);
+    await updateSyncLog(syncLog.sync_id, {
+      status: 'failed',
+      error_message: error.message,
+      total_calls: totalCalls,
+      total_pages: pageCount,
+      inserted_count: insertedCount,
+      failed_count: failedCount
     });
-    sendMessage({ 
-      type: 'complete', 
-      result: {
-        success: false,
-        error: error.message
-      }
-    });
-  } finally {
-    clearInterval(keepAliveInterval);
-    res.end();
+    
+    job.status = 'failed';
+    job.error = error.message;
   }
-});
+}
 
-// Original download endpoint (kept for backwards compatibility)
-router.get('/download', async (req, res) => {
-  const { from, to } = req.query;
+// POST /api/sync/start - Start a background sync job
+router.post('/start', async (req, res) => {
+  const { from, to, mode = 'full' } = req.body;
+  
   if (!from || !to) {
     return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
   }
+  
+  try {
+    // Create sync log
+    const syncLog = await createSyncLog(from, to, mode);
+    
+    // Create job
+    const jobId = uuidv4();
+    const job = {
+      id: jobId,
+      syncId: syncLog.sync_id,
+      syncLog,
+      fromUtc: nyToUtcEpoch(from),
+      toUtc: nyToUtcEpoch(to),
+      mode,
+      status: 'pending',
+      progress: {},
+      startedAt: new Date()
+    };
+    
+    syncJobs.set(jobId, job);
+    
+    // Start processing in background
+    setImmediate(() => processSyncJob(jobId));
+    
+    res.json({
+      success: true,
+      jobId,
+      syncId: syncLog.sync_id,
+      message: 'Sync job started in background',
+      status: 'pending'
+    });
+  } catch (error) {
+    console.error('Failed to start sync:', error);
+    res.status(500).json({ error: 'Failed to start sync', details: error.message });
+  }
+});
 
-  // For full sync, redirect to streaming endpoint
+// GET /api/sync/status/:jobId - Get sync job status
+router.get('/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = syncJobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  
   res.json({
-    success: true,
-    message: 'Please use the streaming endpoint for full sync to avoid timeouts',
-    useStreaming: true
+    jobId: job.id,
+    syncId: job.syncLog.sync_id,
+    status: job.status,
+    progress: job.progress,
+    result: job.result,
+    error: job.error,
+    startedAt: job.startedAt
   });
 });
 
-// Quick download endpoint (no changes needed)
+// GET /api/sync/logs - Get sync logs history
+router.get('/logs', async (req, res) => {
+  const { limit = 10, offset = 0 } = req.query;
+  
+  try {
+    const query = `
+      SELECT * FROM sync_summary_view
+      ORDER BY started_at DESC
+      LIMIT $1 OFFSET $2;
+    `;
+    
+    const result = await pool.query(query, [limit, offset]);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Failed to fetch sync logs:', error);
+    res.status(500).json({ error: 'Failed to fetch sync logs' });
+  }
+});
+
+// GET /api/sync/logs/:syncId/details - Get detailed sync log
+router.get('/logs/:syncId/details', async (req, res) => {
+  const { syncId } = req.params;
+  const { status, limit = 100, offset = 0 } = req.query;
+  
+  try {
+    let query = `
+      SELECT * FROM sync_log_details
+      WHERE sync_id = $1
+    `;
+    
+    const params = [syncId];
+    
+    if (status) {
+      query += ` AND status = $${params.length + 1}`;
+      params.push(status);
+    }
+    
+    query += ` ORDER BY processed_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+    params.push(limit, offset);
+    
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Failed to fetch sync details:', error);
+    res.status(500).json({ error: 'Failed to fetch sync details' });
+  }
+});
+
+// POST /api/sync/retry/:syncId - Retry failed calls from a sync
+router.post('/retry/:syncId', async (req, res) => {
+  const { syncId } = req.params;
+  
+  try {
+    // Get failed sync details
+    const failedQuery = `
+      SELECT * FROM sync_log_details
+      WHERE sync_id = $1 AND status = 'failed' AND retry_count < 3
+      ORDER BY processed_at ASC;
+    `;
+    
+    const failedResult = await pool.query(failedQuery, [syncId]);
+    const failedCalls = failedResult.rows;
+    
+    if (failedCalls.length === 0) {
+      return res.json({ message: 'No failed calls to retry', retried: 0 });
+    }
+    
+    let retriedCount = 0;
+    let successCount = 0;
+    
+    for (const detail of failedCalls) {
+      if (!detail.raw_data) continue;
+      
+      try {
+        const call = JSON.parse(detail.raw_data);
+        await insertCall(call, syncId);
+        if (call.recording_details) {
+          await insertRecording(call.call_id, call.recording_details);
+        }
+        await logSyncDetail(syncId, call.call_id, detail.page_number, 'success');
+        successCount++;
+      } catch (error) {
+        console.error(`Retry failed for call ${detail.call_id}:`, error.message);
+        await logSyncDetail(syncId, detail.call_id, detail.page_number, 'failed', error.message);
+      }
+      retriedCount++;
+    }
+    
+    // Update sync log
+    const updateQuery = `
+      UPDATE sync_logs
+      SET inserted_count = inserted_count + $1,
+          failed_count = failed_count - $1
+      WHERE sync_id = $2;
+    `;
+    
+    await pool.query(updateQuery, [successCount, syncId]);
+    
+    res.json({
+      success: true,
+      retriedCount,
+      successCount,
+      stillFailedCount: retriedCount - successCount
+    });
+  } catch (error) {
+    console.error('Retry failed:', error);
+    res.status(500).json({ error: 'Failed to retry', details: error.message });
+  }
+});
+
+// SSE endpoint for real-time progress
+router.get('/progress/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+  
+  const sendUpdate = () => {
+    const job = syncJobs.get(jobId);
+    if (!job) {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: 'Job not found' })}\n\n`);
+      res.end();
+      return;
+    }
+    
+    res.write(`data: ${JSON.stringify({
+      type: 'progress',
+      status: job.status,
+      progress: job.progress,
+      result: job.result,
+      error: job.error
+    })}\n\n`);
+    
+    if (job.status === 'completed' || job.status === 'failed') {
+      res.end();
+    } else {
+      setTimeout(sendUpdate, 1000); // Update every second
+    }
+  };
+  
+  sendUpdate();
+});
+
+// Quick sync endpoint (unchanged)
 router.get('/download-quick', async (req, res) => {
   const { from, to } = req.query;
   if (!from || !to) {
     return res.status(400).json({ error: 'from and to required (ISO NY datetime)' });
   }
 
-  const startedAfter = nyToUtcEpoch(from);
-  const startedBefore = nyToUtcEpoch(to);
-  console.log(`Quick download params: started_after=${startedAfter}, started_before=${startedBefore}`);
-
-  let totalInserted = 0;
-
   try {
+    const syncLog = await createSyncLog(from, to, 'quick');
+    const startedAfter = nyToUtcEpoch(from);
+    const startedBefore = nyToUtcEpoch(to);
+    
     const rateLimiter = new RateLimiter(15, 1000);
     await rateLimiter.waitIfNeeded();
     
@@ -337,8 +523,6 @@ router.get('/download-quick', async (req, res) => {
       started_after: startedAfter.toString(),
       started_before: startedBefore.toString(),
     });
-    
-    console.log('Fetching first 50 calls only (quick sync)...');
     
     const response = await axios.get('https://dialpad.com/api/v2/call', {
       headers: {
@@ -350,44 +534,46 @@ router.get('/download-quick', async (req, res) => {
     });
     
     const { items } = response.data;
+    let insertedCount = 0;
+    let failedCount = 0;
     
-    if (!items || items.length === 0) {
-      return res.json({ 
-        success: true, 
-        inserted: 0, 
-        message: 'No calls found in the specified date range',
-        isQuickSync: true
-      });
-    }
-
-    console.log(`Quick sync: Inserting ${items.length} calls...`);
-
-    for (const call of items) {
-      try {
-        await insertCall(call);
-        if (call.recording_details) {
-          await insertRecording(call.call_id, call.recording_details);
+    if (items && items.length > 0) {
+      for (const call of items) {
+        try {
+          await insertCall(call, syncLog.sync_id);
+          if (call.recording_details) {
+            await insertRecording(call.call_id, call.recording_details);
+          }
+          await logSyncDetail(syncLog.sync_id, call.call_id, 1, 'success', null, JSON.stringify(call));
+          insertedCount++;
+        } catch (error) {
+          await logSyncDetail(syncLog.sync_id, call.call_id, 1, 'failed', error.message, JSON.stringify(call));
+          failedCount++;
         }
-        totalInserted++;
-      } catch (error) {
-        console.error(`Failed to insert call ${call.call_id}:`, error.message);
       }
     }
+    
+    await updateSyncLog(syncLog.sync_id, {
+      status: failedCount > 0 ? 'partial' : 'completed',
+      total_calls: items?.length || 0,
+      total_pages: 1,
+      inserted_count: insertedCount,
+      failed_count: failedCount,
+      duration_seconds: Math.round((Date.now() - syncLog.started_at) / 1000)
+    });
 
     res.json({
       success: true,
-      totalCalls: items.length,
-      inserted: totalInserted,
-      message: `Quick sync completed: ${totalInserted} calls inserted (first 50 only)`,
-      isQuickSync: true,
-      hasMore: items.length === 50
+      syncId: syncLog.sync_id,
+      totalCalls: items?.length || 0,
+      inserted: insertedCount,
+      failed: failedCount,
+      message: `Quick sync completed: ${insertedCount} inserted, ${failedCount} failed`,
+      hasMore: items?.length === 50
     });
   } catch (err) {
-    console.error('Quick download error:', err.response?.data || err.message);
-    res.status(500).json({ 
-      error: 'Failed to download calls', 
-      details: err.response?.data || err.message 
-    });
+    console.error('Quick sync error:', err);
+    res.status(500).json({ error: 'Failed to sync', details: err.message });
   }
 });
 
