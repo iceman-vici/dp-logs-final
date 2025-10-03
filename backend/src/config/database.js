@@ -5,7 +5,7 @@ const pool = new Pool({
   user: process.env.DB_USER || 'dp_calls',
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'dialpad_calls_db',
-  password: process.env.DB_PASSWORD || 'dp_calls_pwd_2024',
+  password: process.env.DB_PASSWORD || 'dp_logs',
   port: process.env.DB_PORT || 5432,
   max: 20, // Maximum number of clients in the pool
   idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
