@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import CallsTable from './components/CallsTable';
 import UserStatsTable from './components/UserStatsTable';
 import SyncControls from './components/SyncControls';
@@ -17,26 +17,6 @@ function App() {
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
   const [showSyncLogs, setShowSyncLogs] = useState(false);
-
-  useEffect(() => {
-    loadInitialData();
-  }, []);
-
-  const loadInitialData = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      await Promise.all([
-        fetchCalls(),
-        fetchUserStats()
-      ]);
-    } catch (err) {
-      setError('Failed to load initial data');
-      toast.error('Failed to load data. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchCalls = async () => {
     try {
@@ -57,6 +37,26 @@ function App() {
       throw err;
     }
   };
+
+  const loadInitialData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      await Promise.all([
+        fetchCalls(),
+        fetchUserStats()
+      ]);
+    } catch (err) {
+      setError('Failed to load initial data');
+      toast.error('Failed to load data. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
 
   const handleSync = async (fromDate, toDate, syncMode = 'quick', onProgress) => {
     try {
